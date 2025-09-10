@@ -792,8 +792,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 	
 	for {
 		// Capture queue depths for monitoring
-		// sendMsgDepth := len(p.sendMsg)
-		// incomingDepth := len(p.incoming)
+		sendMsgDepth := len(p.sendMsg)
+		incomingDepth := len(p.incoming)
 		
 		// Start span for this iteration
 		iterCtx, iterSpan := startSpan(ctx, "pubsub.process_loop_iteration")
@@ -801,10 +801,10 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		
 		iterSpan.SetAttributes(
 			attribute.Int64("pubsub.iteration", iterationCount),
-			// attribute.Int("pubsub.sendmsg_queue_depth", sendMsgDepth),
-			// attribute.Int("pubsub.incoming_queue_depth", incomingDepth),
-			// attribute.Int("pubsub.peer_count", len(p.peers)),
-			// attribute.Int("pubsub.topic_count", len(p.topics)),
+			attribute.Int("pubsub.sendmsg_queue_depth", sendMsgDepth),
+			attribute.Int("pubsub.incoming_queue_depth", incomingDepth),
+			attribute.Int("pubsub.peer_count", len(p.peers)),
+			attribute.Int("pubsub.topic_count", len(p.topics)),
 		)
 		
 		select {
