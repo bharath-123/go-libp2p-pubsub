@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 )
@@ -43,15 +44,9 @@ func (p *PubSub) getHelloPacket() *RPC {
 }
 
 func (p *PubSub) handleNewStream(s network.Stream) {
+	_, handleNetworkStreamSpan := otelTracer.Start(context.Background(), "pubsub.handle_network_stream")
 	peer := s.Conn().RemotePeer()
 	
-	// Create stream-level span for the entire stream lifecycle
-	ctx, streamSpan := startSpan(context.Background(), "pubsub.handle_new_stream")
-	streamSpan.SetAttributes(
-		attribute.String("pubsub.peer_id", string(peer)),
-	)
-	defer streamSpan.End()
-
 	p.inboundStreamsMx.Lock()
 	other, dup := p.inboundStreams[peer]
 	if dup {
@@ -61,7 +56,8 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 	p.inboundStreams[peer] = s
 	p.inboundStreamsMx.Unlock()
 
-	defer func() {				
+	defer func() {		
+		handleNetworkStreamSpan.End()		
 		p.inboundStreamsMx.Lock()
 		if p.inboundStreams[peer] == s {
 			delete(p.inboundStreams, peer)
@@ -69,10 +65,17 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		p.inboundStreamsMx.Unlock()
 	}()
 
+	var rpcSpan trace.Span
+	defer func() {
+		if rpcSpan != nil {
+			rpcSpan.End()
+		}
+	}()
+
 	r := msgio.NewVarintReaderSize(s, p.maxMessageSize)
 	for {
 		// Create span for each message read operation
-		msgSpanCtx, msgSpan := startSpan(ctx, "pubsub.read_network_message")
+		_, msgSpan := otelTracer.Start(context.Background(), "pubsub.incoming.msg")
 		msgSpan.SetAttributes(
 			attribute.String("peer_id", string(peer)),
 		)
@@ -80,10 +83,11 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		// ignore the values. We only want to know when the first bytes came in.
 		_, _ = r.NextMsgLen()
 		// Start the time once we've received the message length
-		start := time.Now()
+		timeWhenMessageReceived := time.Now()
 		msgbytes, err := r.ReadMsg()
 		if err != nil {
 			r.ReleaseMsg(msgbytes)
+			msgSpan.SetAttributes(attribute.String("error", err.Error()))
 			msgSpan.End()
 			if err != io.EOF {
 				s.Reset()
@@ -108,11 +112,11 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		rpc := new(RPC)
 		err = rpc.Unmarshal(msgbytes)
 		r.ReleaseMsg(msgbytes)
-		rpc.receivedAt = time.Now()
 		if err != nil {
-			msgSpan.SetAttributes(attribute.String("result", "parse_error"), 
-						attribute.String("error", err.Error()),
-						attribute.Int("msgSize", messageSize),
+			msgSpan.SetAttributes(
+				attribute.String("result", "parse_error"), 
+				attribute.String("error", err.Error()),
+				attribute.Int("msgSize", messageSize),
 			)
 			msgSpan.End()
 			s.Reset()
@@ -120,7 +124,10 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 
-		msgSpan.SetAttributes(attribute.Int64("time_to_read_rpc", time.Since(start).Milliseconds()))
+		msgSpan.SetAttributes(attribute.Int64("time_to_read_rpc", time.Since(timeWhenMessageReceived).Milliseconds()))
+
+		rpc.receivedAt = timeWhenMessageReceived
+		rpc.ctx, rpcSpan = otelTracer.Start(context.Background(), "pubsub.incoming.rpc")
 
 		// Analyze RPC content for detailed metrics
 		messageCount := len(rpc.GetPublish())
@@ -135,21 +142,21 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		}
 
 		// Queue to event loop
-		queueStart := time.Now()
 		rpc.from = peer
 
-		rpc.queuedCtx = msgSpanCtx
+		queueSpanCtx, queueSpan := otelTracer.Start(rpc.ctx,"pubsub.incoming.rpc.queued")
+		rpc.queuedCtx = queueSpanCtx
 
 		select {
 		case p.incoming <- rpc:
 		case <-p.ctx.Done():
+			queueSpan.End()
 			msgSpan.SetAttributes(attribute.String("result", "stream_done"))
 			msgSpan.End()
 			// Close is useless because the other side isn't reading.
 			s.Reset()
 			return
 		}
-		queueDuration := time.Since(queueStart)
 
 		// Set comprehensive message attributes
 		msgSpan.SetAttributes(
@@ -162,7 +169,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			attribute.Int("graft_count", graftCount),
 			attribute.Int("prune_count", pruneCount),
 			attribute.Int("idontwant_count", idontwantCount),
-			attribute.Int64("queue_delay_ms", queueDuration.Milliseconds()),
 		)
 		
 		msgSpan.End()

@@ -906,6 +906,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			preq.resp <- peers
 			
 		case rpc := <-p.incoming:
+			trace.SpanFromContext(rpc.queuedCtx).End()
+
 			idleTime = time.Since(loopStartTime)
 
 			ctx, eventSpan := startSpan(iterCtx, "pubsub.handle_incoming_rpc")
@@ -995,6 +997,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			idleTime = time.Since(loopStartTime)
 
 			log.Info("pubsub processloop shutting down")
+			iterSpan.SetAttributes(attribute.Int64("loop_idle_time", idleTime.Milliseconds()))
 			iterSpan.End()
 			return
 		}
@@ -1372,26 +1375,8 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		queueDelayMs = start.Sub(rpc.receivedAt).Milliseconds()
 	}
 
-	// Basic RPC metrics
-	messageCount := len(rpc.GetPublish())
-	subscriptionCount := len(rpc.GetSubscriptions())
-	ihaveCount, iwantCount, graftCount, pruneCount := 0, 0, 0, 0
-	
-	if rpc.Control != nil {
-		ihaveCount = len(rpc.Control.GetIhave())
-		iwantCount = len(rpc.Control.GetIwant())
-		graftCount = len(rpc.Control.GetGraft())
-		pruneCount = len(rpc.Control.GetPrune())
-	}
-	
+	// Basic RPC metrics	
 	handleRPCSpan.SetAttributes(
-		attribute.String("peer_id", string(rpc.from)),
-		attribute.Int("message_count", messageCount),
-		attribute.Int("subscription_count", subscriptionCount),
-		attribute.Int("ihave_count", ihaveCount),
-		attribute.Int("iwant_count", iwantCount),
-		attribute.Int("graft_count", graftCount),
-		attribute.Int("prune_count", pruneCount),
 		attribute.Int64("queue_delay_ms", queueDelayMs),
 	)
 	
@@ -1417,7 +1402,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		if err != nil {
 			handleRPCSpan.SetAttributes(
 				attribute.String("result", "subscription_filter_failed"),
-				attribute.String("pubsub.error", err.Error()),
+				attribute.String("error", err.Error()),
 			)
 			log.Debugf("subscription filter error: %s; ignoring RPC", err)
 			return
@@ -1527,21 +1512,16 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	p.rt.HandleRPC(rpc)
 	routerHandleSpan.End()
 
-	totalDuration := time.Since(start)
-
 	// Set comprehensive attributes
 	handleRPCSpan.SetAttributes(
-		attribute.String("pubsub.accept_status", acceptStatusStr),
-		attribute.Int("pubsub.subscription_filtered", subscriptionFiltered),
-		attribute.Int("pubsub.topics_joined", topicsJoined),
-		attribute.Int("pubsub.topics_left", topicsLeft),
-		attribute.Int("pubsub.messages_processed", messagesProcessed),
-		attribute.Int("pubsub.messages_filtered", messagesFiltered),
-		attribute.Int("pubsub.messages_ignored", messagesIgnored),
-		attribute.Int("pubsub.messages_pushed", messagesPushed),
-
-		// Timing breakdown
-		attribute.Int64("pubsub.total_duration_ms", totalDuration.Milliseconds()),
+		attribute.String("accept_status", acceptStatusStr),
+		attribute.Int("subscription_filtered", subscriptionFiltered),
+		attribute.Int("topics_joined", topicsJoined),
+		attribute.Int("topics_left", topicsLeft),
+		attribute.Int("messages_processed", messagesProcessed),
+		attribute.Int("messages_filtered", messagesFiltered),
+		attribute.Int("messages_ignored", messagesIgnored),
+		attribute.Int("messages_pushed", messagesPushed),
 	)
 }
 
