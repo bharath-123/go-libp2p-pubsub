@@ -974,7 +974,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 					attribute.Int("pubsub.prune_count", len(rpc.Control.GetPrune())),
 				)
 			}
-			p.handleIncomingRPC(rpc)
+			p.handleIncomingRPC(iterCtx, rpc)
 			eventSpan.End()
 
 		case msg := <-p.sendMsg:
@@ -1432,10 +1432,8 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 
 	// Calculate timing from network arrival to event loop processing
 	var queueDelayMs int64
-	var networkToProcessingMs int64
 	if !rpc.receivedAt.IsZero() {
 		queueDelayMs = start.Sub(rpc.receivedAt).Milliseconds()
-		networkToProcessingMs = queueDelayMs
 	}
 
 	// Basic RPC metrics
@@ -1443,7 +1441,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	subscriptionCount := len(rpc.GetSubscriptions())
 	controlMessageCount := 0
 	ihaveCount, iwantCount, graftCount, pruneCount := 0, 0, 0, 0
-
+	
 	if rpc.Control != nil {
 		ihaveCount = len(rpc.Control.GetIhave())
 		iwantCount = len(rpc.Control.GetIwant())
@@ -1461,10 +1459,8 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		attribute.Int("pubsub.iwant_count", iwantCount),
 		attribute.Int("pubsub.graft_count", graftCount),
 		attribute.Int("pubsub.prune_count", pruneCount),
-		attribute.Int64("pubsub.queue_delay_ms", queueDelayMs),
-		attribute.Int64("pubsub.network_to_processing_ms", networkToProcessingMs),
 	)
-
+	
 	// Phase 1: App-specific inspection
 	inspectionStart := time.Now()
 	if p.appSpecificRpcInspector != nil {
@@ -1481,7 +1477,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		}
 	}
 	inspectionDuration := time.Since(inspectionStart)
-
+	
 	// Phase 2: Tracer notification
 	tracerStart := time.Now()
 	p.tracer.RecvRPC(rpc)
@@ -1491,7 +1487,6 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	subscriptionStart := time.Now()
 	subs := rpc.GetSubscriptions()
 	subscriptionFiltered := 0
-
 	if len(subs) != 0 && p.subFilter != nil {
 		var err error
 		originalCount := len(subs)
@@ -1582,7 +1577,6 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		var toPush []*Message
 		for _, pmsg := range rpc.GetPublish() {
 			messagesProcessed++
-
 			if !(p.subscribedToMsg(pmsg) || p.canRelayMsg(pmsg)) {
 				messagesFiltered++
 				log.Debug("received message in topic we didn't subscribe to; ignoring message")
