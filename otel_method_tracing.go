@@ -94,7 +94,7 @@ func GetOtelTopicFilter() string {
 // Falls back to context.Background() if message context is nil
 func startSpanFromMessage(msg interface{}, operationName string) (context.Context, trace.Span) {
 	var ctx context.Context = context.Background()
-
+	
 	// Try to extract context from Message if available
 	if m, ok := msg.(*Message); ok && m.Ctx != nil {
 		ctx = m.Ctx
@@ -103,18 +103,18 @@ func startSpanFromMessage(msg interface{}, operationName string) (context.Contex
 			// Context has a valid span - nesting should work
 		}
 	}
-
+	
 	return startSpan(ctx, operationName)
 }
 
 // startSpanForTopicFromMessage starts a topic-filtered span using the context from a Message
 func startSpanForTopicFromMessage(msg interface{}, operationName, topic string) (context.Context, trace.Span) {
 	var ctx context.Context = context.Background()
-
+	
 	// Try to extract context from Message if available
 	if m, ok := msg.(*Message); ok && m.Ctx != nil {
 		ctx = m.Ctx
 	}
-
+	
 	return startSpanForTopic(ctx, operationName, topic)
 }

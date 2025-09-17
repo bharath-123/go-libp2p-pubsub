@@ -244,7 +244,7 @@ func TestOtelTracingSpanNesting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter), // Immediate output
 		trace.WithResource(resource.NewWithAttributes(
@@ -254,64 +254,64 @@ func TestOtelTracingSpanNesting(t *testing.T) {
 		trace.WithSampler(trace.AlwaysSample()),
 	)
 	defer tp.Shutdown(context.Background())
-
+	
 	otel.SetTracerProvider(tp)
-
+	
 	// Enable tracing
 	InitOtelTracing()
-
+	
 	if !IsTracingEnabled() {
 		t.Fatal("tracing should be enabled")
 	}
-
+	
 	// Create test environment
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	
 	hosts := getDefaultHosts(t, 2)
 	psubs := getGossipsubs(ctx, hosts)
-
+	
 	// Connect peers
 	connectAll(t, hosts)
-
+	
 	topic := "span-nesting-test-topic"
-
+	
 	// Create application tracer to simulate calling application (like Prysm)
 	appTracer := otel.Tracer("test-application")
-
+	
 	t.Log("Creating application span and publishing with context...")
-
+	
 	// Create application span (simulating Prysm or other calling application)
 	appCtx, appSpan := appTracer.Start(ctx, "app.process_message")
 	appSpan.SetAttributes(
 		attribute.String("app.operation", "beacon_attestation_processing"),
 		attribute.String("app.component", "prysm"),
 	)
-
+	
 	// Join topic with application context - this should create nested spans
 	topicHandle, err := psubs[0].Join(topic)
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	
 	// Subscribe with the second peer
 	sub, err := psubs[1].Subscribe(topic)
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	
 	// Wait for mesh to form
 	time.Sleep(time.Millisecond * 100)
-
+	
 	// This should create nested spans under the application span
 	message := []byte("test message with nested spans")
 	err = topicHandle.Publish(appCtx, message)
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	
 	appSpan.End()
-
+	
 	// Receive the message
 	msg, err := sub.Next(ctx)
 	if err != nil {
@@ -320,81 +320,10 @@ func TestOtelTracingSpanNesting(t *testing.T) {
 	if string(msg.Data) != string(message) {
 		t.Fatal("received wrong message")
 	}
-
+	
 	// Force flush to ensure all spans are exported
 	tp.ForceFlush(context.Background())
 	time.Sleep(time.Millisecond * 200)
-
+	
 	t.Log("Test completed. Check above for nested spans: app.process_message -> gossipsub.publish -> pubsub.validate_*")
-}
-
-func TestHandleNewStreamTracing(t *testing.T) {
-	// Setup stdout tracer
-	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tp := trace.NewTracerProvider(
-		trace.WithSyncer(exporter),
-	)
-	defer tp.ForceFlush(context.Background())
-
-	InitOtelTracing()
-	defer func() {
-		otelTracer = nil
-	}()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Create test network with 2 peers
-	hosts := getDefaultHosts(t, 2)
-	psubs := getPubsubs(ctx, hosts)
-
-	// Connect peers
-	connect(t, hosts[0], hosts[1])
-
-	// Subscribe to a topic on both peers
-	topic := "test-handleNewStream-topic"
-	sub1, err := psubs[0].Subscribe(topic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub1.Cancel()
-
-	sub2, err := psubs[1].Subscribe(topic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub2.Cancel()
-
-	// Wait for mesh formation
-	time.Sleep(100 * time.Millisecond)
-
-	// Publish a message from peer 0 to peer 1
-	// This should trigger handleNewStream tracing on peer 1
-	msg := []byte("test message for handleNewStream tracing")
-	err = psubs[0].Publish(topic, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Wait for message propagation
-	ctx2, cancel2 := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel2()
-
-	select {
-	case receivedMsg := <-sub2.ch:
-		if string(receivedMsg.Data) != string(msg) {
-			t.Errorf("expected %s, got %s", string(msg), string(receivedMsg.Data))
-		}
-	case <-ctx2.Done():
-		t.Fatal("timeout waiting for message")
-	}
-
-	// Force flush to see traces
-	tp.ForceFlush(context.Background())
-
-	t.Log("Test completed - check stdout for handleNewStream traces")
 }

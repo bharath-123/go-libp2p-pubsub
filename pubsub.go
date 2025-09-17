@@ -247,7 +247,7 @@ type Message struct {
 	ValidatorData interface{}
 	Local         bool
 	// Context for tracing - allows span nesting from calling applications
-	Ctx context.Context
+	Ctx           context.Context
 }
 
 func (m *Message) GetFrom() peer.ID {
