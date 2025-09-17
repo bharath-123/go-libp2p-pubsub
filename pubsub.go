@@ -13,8 +13,8 @@ import (
 	"time"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
-	"github.com/libp2p/go-libp2p-pubsub/timecache"
 	"go.opentelemetry.io/otel/attribute"
+	"github.com/libp2p/go-libp2p-pubsub/timecache"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -776,7 +776,7 @@ func WithAppSpecificRpcInspector(inspector func(peer.ID, *RPC) error) Option {
 func (p *PubSub) processLoop(ctx context.Context) {
 	_, loopSpan := startSpan(ctx, "pubsub.process_loop")
 	defer loopSpan.End()
-
+	
 	defer func() {
 		// Clean up go routines.
 		for _, queue := range p.peers {
@@ -789,16 +789,16 @@ func (p *PubSub) processLoop(ctx context.Context) {
 
 	// Event loop iteration counter
 	var iterationCount int64
-
+	
 	for {
 		// Capture queue depths for monitoring
 		sendMsgDepth := len(p.sendMsg)
 		incomingDepth := len(p.incoming)
-
+		
 		// Start span for this iteration
 		iterCtx, iterSpan := startSpan(ctx, "pubsub.process_loop_iteration")
 		iterationCount++
-
+		
 		iterSpan.SetAttributes(
 			attribute.Int64("pubsub.iteration", iterationCount),
 			attribute.Int("pubsub.sendmsg_queue_depth", sendMsgDepth),
@@ -806,7 +806,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			attribute.Int("pubsub.peer_count", len(p.peers)),
 			attribute.Int("pubsub.topic_count", len(p.topics)),
 		)
-
+		
 		select {
 		case <-p.newPeers:
 			_, eventSpan := startSpan(iterCtx, "pubsub.handle_pending_peers")
@@ -875,7 +875,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			eventSpan.SetAttributes(attribute.Int("pubsub.topic_count_response", len(out)))
 			treq.resp <- out
 			eventSpan.End()
-
+			
 		case topic := <-p.addTopic:
 			_, eventSpan := startSpan(iterCtx, "pubsub.add_topic")
 			eventSpan.SetAttributes(
@@ -884,7 +884,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleAddTopic(topic)
 			eventSpan.End()
-
+			
 		case topic := <-p.rmTopic:
 			_, eventSpan := startSpan(iterCtx, "pubsub.remove_topic")
 			eventSpan.SetAttributes(
@@ -893,7 +893,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleRemoveTopic(topic)
 			eventSpan.End()
-
+			
 		case sub := <-p.cancelCh:
 			_, eventSpan := startSpan(iterCtx, "pubsub.cancel_subscription")
 			eventSpan.SetAttributes(
@@ -902,7 +902,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleRemoveSubscription(sub)
 			eventSpan.End()
-
+			
 		case sub := <-p.addSub:
 			_, eventSpan := startSpan(iterCtx, "pubsub.add_subscription")
 			eventSpan.SetAttributes(
@@ -911,7 +911,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleAddSubscription(sub)
 			eventSpan.End()
-
+			
 		case relay := <-p.addRelay:
 			_, eventSpan := startSpan(iterCtx, "pubsub.add_relay")
 			eventSpan.SetAttributes(
@@ -920,7 +920,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleAddRelay(relay)
 			eventSpan.End()
-
+			
 		case topic := <-p.rmRelay:
 			_, eventSpan := startSpan(iterCtx, "pubsub.remove_relay")
 			eventSpan.SetAttributes(
@@ -929,7 +929,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			)
 			p.handleRemoveRelay(topic)
 			eventSpan.End()
-
+			
 		case preq := <-p.getPeers:
 			_, eventSpan := startSpan(iterCtx, "pubsub.get_peers")
 			eventSpan.SetAttributes(
@@ -957,36 +957,25 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			eventSpan.SetAttributes(attribute.Int("pubsub.peer_count_response", len(peers)))
 			preq.resp <- peers
 			eventSpan.End()
-
+			
 		case rpc := <-p.incoming:
-		outer:
-			for {
-				trace.SpanFromContext(rpc.queuedCtx).End()
-				ctx, eventSpan := startSpan(iterCtx, "pubsub.handle_incoming_rpc")
-				eventSpan.AddLink(trace.LinkFromContext(rpc.ctx))
+			_, eventSpan := startSpan(iterCtx, "pubsub.handle_incoming_rpc")
+			eventSpan.SetAttributes(
+				attribute.String("pubsub.event_type", "incoming_rpc"),
+				attribute.String("pubsub.peer_id", rpc.from.String()),
+				attribute.Int("pubsub.message_count", len(rpc.GetPublish())),
+				attribute.Int("pubsub.subscription_count", len(rpc.GetSubscriptions())),
+			)
+			if rpc.Control != nil {
 				eventSpan.SetAttributes(
-					attribute.String("pubsub.event_type", "incoming_rpc"),
-					attribute.String("pubsub.peer_id", rpc.from.String()),
-					attribute.Int("pubsub.message_count", len(rpc.GetPublish())),
-					attribute.Int("pubsub.subscription_count", len(rpc.GetSubscriptions())),
+					attribute.Int("pubsub.ihave_count", len(rpc.Control.GetIhave())),
+					attribute.Int("pubsub.iwant_count", len(rpc.Control.GetIwant())),
+					attribute.Int("pubsub.graft_count", len(rpc.Control.GetGraft())),
+					attribute.Int("pubsub.prune_count", len(rpc.Control.GetPrune())),
 				)
-				if rpc.Control != nil {
-					eventSpan.SetAttributes(
-						attribute.Int("pubsub.ihave_count", len(rpc.Control.GetIhave())),
-						attribute.Int("pubsub.iwant_count", len(rpc.Control.GetIwant())),
-						attribute.Int("pubsub.graft_count", len(rpc.Control.GetGraft())),
-						attribute.Int("pubsub.prune_count", len(rpc.Control.GetPrune())),
-					)
-				}
-				p.handleIncomingRPC(ctx, rpc)
-				eventSpan.End()
-
-				select {
-				case rpc = <-p.incoming:
-				default:
-					break outer
-				}
 			}
+			p.handleIncomingRPC(rpc)
+			eventSpan.End()
 
 		case msg := <-p.sendMsg:
 			_, eventSpan := startSpan(iterCtx, "pubsub.publish_message")
@@ -1075,7 +1064,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			iterSpan.End()
 			return
 		}
-
+		
 		iterSpan.End()
 	}
 }
