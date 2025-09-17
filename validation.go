@@ -398,6 +398,11 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 			async = append(async, val)
 		}
 	}
+	
+	span.SetAttributes(
+		attribute.Int("pubsub.inline_validators", len(inline)),
+		attribute.Int("pubsub.async_validators", len(async)),
+	)
 
 	span.SetAttributes(
 		attribute.Int("pubsub.inline_validators", len(inline)),
@@ -410,13 +415,11 @@ loop:
 	for i, val := range inline {
 		validatorStart := time.Now()
 		validationResult := val.validateMsg(v.p.ctx, src, msg)
-
 		span.SetAttributes(
 			attribute.String(fmt.Sprintf("pubsub.inline_validator_%d_topic", i), val.topic),
 			attribute.String(fmt.Sprintf("pubsub.inline_validator_%d_result", i), validationResultString(validationResult)),
 			attribute.Int64(fmt.Sprintf("pubsub.inline_validator_%d_duration_ms", i), time.Since(validatorStart).Milliseconds()),
 		)
-
 		switch validationResult {
 		case ValidationAccept:
 		case ValidationReject:
@@ -493,13 +496,17 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 		attribute.Int("pubsub.async_validators_count", len(vals)),
 		attribute.String("pubsub.initial_result", validationResultString(r)),
 	)
-
 	start := time.Now()
 	result := v.validateTopic(vals, src, msg)
 
 	if result == ValidationAccept && r != ValidationAccept {
 		result = r
 	}
+	
+	span.SetAttributes(
+		attribute.String("pubsub.final_result", validationResultString(result)),
+		attribute.Int64("pubsub.async_validation_duration_ms", time.Since(start).Milliseconds()),
+	)
 
 	span.SetAttributes(
 		attribute.String("pubsub.final_result", validationResultString(result)),
@@ -536,7 +543,6 @@ func (v *validation) validateTopic(vals []*validatorImpl, src peer.ID, msg *Mess
 		attribute.String("pubsub.topic", msg.GetTopic()),
 		attribute.Int("pubsub.validators_count", len(vals)),
 	)
-
 	if len(vals) == 1 {
 		span.SetAttributes(attribute.Bool("pubsub.single_validator", true))
 		result := v.validateSingleTopic(vals[0], src, msg)
@@ -545,7 +551,6 @@ func (v *validation) validateTopic(vals []*validatorImpl, src peer.ID, msg *Mess
 	}
 
 	span.SetAttributes(attribute.Bool("pubsub.single_validator", false))
-
 	ctx, cancel := context.WithCancel(v.p.ctx)
 	defer cancel()
 
@@ -554,7 +559,7 @@ func (v *validation) validateTopic(vals []*validatorImpl, src peer.ID, msg *Mess
 	throttledCount := 0
 
 	start := time.Now()
-
+	
 	for _, val := range vals {
 		rcount++
 
@@ -597,7 +602,6 @@ loop:
 		attribute.String("pubsub.validation_result", validationResultString(result)),
 		attribute.Int64("pubsub.validation_duration_ms", time.Since(start).Milliseconds()),
 	)
-
 	return result
 }
 
