@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/semconv/v1.27.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 func TestOtelTracingDisabled(t *testing.T) {
@@ -35,7 +35,6 @@ func TestOtelTracingEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	tp := trace.NewTracerProvider(
 		trace.WithBatcher(exporter),
 		trace.WithResource(resource.NewWithAttributes(
@@ -69,7 +68,6 @@ func TestGossipSubWithOtelTracing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	tp := trace.NewTracerProvider(
 		trace.WithBatcher(exporter),
 		trace.WithResource(resource.NewWithAttributes(
@@ -114,7 +112,6 @@ func TestGossipSubWithOtelTracing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	// Receive messages (this will create delivery traces)
 	for i, sub := range subs[1:] {
 		msg, err := sub.Next(ctx)
