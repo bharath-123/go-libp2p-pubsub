@@ -60,12 +60,10 @@ func startSpanForTopic(ctx context.Context, operationName string, topic string) 
 		// Return no-op span if tracing not enabled
 		return ctx, trace.SpanFromContext(ctx)
 	}
-
 	// If topic filter is set and topic doesn't contain the filter string, return no-op span
 	if otelTopicFilter != "" && !strings.Contains(topic, otelTopicFilter) {
 		return ctx, trace.SpanFromContext(ctx)
 	}
-
 	return otelTracer.Start(ctx, operationName)
 }
 
@@ -74,12 +72,10 @@ func shouldTraceTopic(topic string) bool {
 	if otelTracer == nil {
 		return false
 	}
-
 	// If no filter is set, trace all topics
 	if otelTopicFilter == "" {
 		return true
 	}
-
 	// Only trace if topic contains the filter string
 	return strings.Contains(topic, otelTopicFilter)
 }

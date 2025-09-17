@@ -139,7 +139,6 @@ func TestOtelTracingWithTopicFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	tp := trace.NewTracerProvider(
 		trace.WithSyncer(exporter), // Immediate output
 		trace.WithResource(resource.NewWithAttributes(
@@ -185,7 +184,6 @@ func TestOtelTracingWithTopicFilter(t *testing.T) {
 			t.Fatal(err)
 		}
 		beaconSubs = append(beaconSubs, beaconSub)
-
 		otherSub, err := ps.Subscribe(otherTopic)
 		if err != nil {
 			t.Fatal(err)
@@ -203,7 +201,6 @@ func TestOtelTracingWithTopicFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	t.Log("Publishing to other topic (should NOT be traced)...")
 	// Publish to other topic - should NOT be traced
 	otherMsg := []byte("other message")
@@ -211,7 +208,6 @@ func TestOtelTracingWithTopicFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	// Receive messages from beacon topic
 	for i, sub := range beaconSubs[1:] {
 		msg, err := sub.Next(ctx)
@@ -222,7 +218,6 @@ func TestOtelTracingWithTopicFilter(t *testing.T) {
 			t.Fatalf("peer %d received wrong beacon message", i+1)
 		}
 	}
-
 	// Receive messages from other topic
 	for i, sub := range otherSubs[1:] {
 		msg, err := sub.Next(ctx)
