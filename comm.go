@@ -45,6 +45,19 @@ func (p *PubSub) getHelloPacket() *RPC {
 
 func (p *PubSub) handleNewStream(s network.Stream) {
 	peer := s.Conn().RemotePeer()
+	
+	// Create stream-level span for the entire stream lifecycle
+	_, streamSpan := startSpan(context.Background(), "pubsub.handle_new_stream")
+	streamSpan.SetAttributes(
+		attribute.String("pubsub.peer_id", peer.String()),
+		attribute.String("pubsub.stream_direction", "inbound"),
+	)
+	defer streamSpan.End()
+
+	streamStart := time.Now()
+	totalMessages := 0
+	totalBytes := 0
+	duplicateStreamDetected := false
 
 	// Create stream-level span for the entire stream lifecycle
 	_, streamSpan := startSpan(context.Background(), "pubsub.handle_new_stream")
@@ -71,7 +84,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 
 	defer func() {
 		streamDuration := time.Since(streamStart)
-
 		// Set final stream metrics
 		streamSpan.SetAttributes(
 			attribute.Int("pubsub.total_messages_received", totalMessages),
@@ -121,7 +133,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 				attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
 			)
 			msgSpan.End()
-
 			if err != io.EOF {
 				s.Reset()
 				log.Debugf("error reading rpc from %s: %s", s.Conn().RemotePeer(), err)
@@ -133,7 +144,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 
 			return
 		}
-
 		if len(msgbytes) == 0 {
 			msgSpan.SetAttributes(
 				attribute.String("pubsub.result", "empty_message"),
@@ -145,7 +155,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 
 		messageSize := len(msgbytes)
 		totalBytes += messageSize
-
 		// Parse RPC and analyze content
 		parseStart := time.Now()
 		rpc := new(RPC)
@@ -163,7 +172,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 				attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
 			)
 			msgSpan.End()
-
 			s.Reset()
 			log.Warnf("bogus rpc from %s: %s", s.Conn().RemotePeer(), err)
 			return
@@ -174,7 +182,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		subscriptionCount := len(rpc.GetSubscriptions())
 		controlMessageCount := 0
 		ihaveCount, iwantCount, graftCount, pruneCount, idontwantCount := 0, 0, 0, 0, 0
-
 		if rpc.Control != nil {
 			ihaveCount = len(rpc.Control.GetIhave())
 			iwantCount = len(rpc.Control.GetIwant())
@@ -210,7 +217,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 				attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
 			)
 			msgSpan.End()
-
 			// Close is useless because the other side isn't reading.
 			s.Reset()
 			return
@@ -230,7 +236,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			attribute.Int("pubsub.graft_count", graftCount),
 			attribute.Int("pubsub.prune_count", pruneCount),
 			attribute.Int("pubsub.idontwant_count", idontwantCount),
-
 			// Timing breakdown
 			attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
 			attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
@@ -262,12 +267,10 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		if messageSize > 100*1024 { // 100KB
 			msgSpan.SetAttributes(attribute.Bool("pubsub.large_message", true))
 		}
-
 		// Flag control message heavy RPCs
 		if controlMessageCount > 100 {
 			msgSpan.SetAttributes(attribute.Bool("pubsub.control_heavy_rpc", true))
 		}
-
 		msgSpan.End()
 	}
 }

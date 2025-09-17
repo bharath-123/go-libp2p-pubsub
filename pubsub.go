@@ -1459,6 +1459,8 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		attribute.Int("pubsub.iwant_count", iwantCount),
 		attribute.Int("pubsub.graft_count", graftCount),
 		attribute.Int("pubsub.prune_count", pruneCount),
+		attribute.Int64("pubsub.queue_delay_ms", queueDelayMs),
+		attribute.Int64("pubsub.network_to_processing_ms", networkToProcessingMs),
 	)
 	
 	// Phase 1: App-specific inspection
