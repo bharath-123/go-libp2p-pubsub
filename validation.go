@@ -352,7 +352,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("pubsub.peer_id", string(src)),
+		attribute.String("pubsub.peer_id", src.String()),
 		attribute.String("pubsub.topic", msg.GetTopic()),
 		attribute.Int("pubsub.message_size", len(msg.GetData())),
 		attribute.Int("pubsub.validators_count", len(vals)),

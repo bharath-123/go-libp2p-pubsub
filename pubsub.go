@@ -912,7 +912,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 
 			ctx, eventSpan := startSpan(iterCtx, "pubsub.handle_incoming_rpc")
 			eventSpan.SetAttributes(
-				attribute.String("peer_id", string(rpc.from)),
+				attribute.String("peer_id", rpc.from.String()),
 				attribute.Int("message_count", len(rpc.GetPublish())),
 				attribute.Int("subscription_count", len(rpc.GetSubscriptions())),
 			)

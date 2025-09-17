@@ -77,7 +77,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		// Create span for each message read operation
 		_, msgSpan := otelTracer.Start(context.Background(), "pubsub.incoming.msg")
 		msgSpan.SetAttributes(
-			attribute.String("peer_id", string(peer)),
+			attribute.String("peer_id", peer.String()),
 		)
 
 		// ignore the values. We only want to know when the first bytes came in.

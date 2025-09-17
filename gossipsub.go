@@ -763,7 +763,7 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 	defer span.End()
 
 	span.SetAttributes(
-		attribute.String("rpc_from", string(rpc.from)),
+		attribute.String("rpc_from", rpc.from.String()),
 		attribute.Int("rpc_messages", len(rpc.GetPublish())),
 		attribute.Int("rpc_subscriptions", len(rpc.GetSubscriptions())),
 	)
@@ -1256,7 +1256,7 @@ func (gs *GossipSubRouter) Publish(msg *Message) {
 	span.SetAttributes(
 		attribute.String("topic", msg.GetTopic()),
 		attribute.Int("message_size", len(msg.GetData())),
-		attribute.String("from", string(msg.ReceivedFrom)),
+		attribute.String("from", msg.ReceivedFrom.String()),
 	)
 
 	start := time.Now()
