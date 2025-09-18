@@ -1384,17 +1384,20 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	
 	// Phase 1: App-specific inspection
 	if p.appSpecificRpcInspector != nil {
+		_, appSpecificRpcInspectorSpan := otelTracer.Start(ctx, "pubsub.app_specific_rpc_inspector")
 		// check if the RPC is allowed by the external inspector
 		if err := p.appSpecificRpcInspector(rpc.from, rpc); err != nil {
 			log.Debugf("application-specific inspection failed, rejecting incoming rpc: %s", err)
 			return // reject the RPC
 		}
+		appSpecificRpcInspectorSpan.End()
 	}
 	
 	// Phase 2: Tracer notification
 	p.tracer.RecvRPC(rpc)
 
 	// Phase 3: Subscription processing
+	_, subscriptionProcessingSpan := otelTracer.Start(ctx, "pubsub.subscription_processing")
 	subs := rpc.GetSubscriptions()
 	subscriptionFiltered := 0
 	if len(subs) != 0 && p.subFilter != nil {
@@ -1446,10 +1449,13 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 			}
 		}
 	}
+	subscriptionProcessingSpan.End()
 
+	_, routerAcceptanceCheckSpan := otelTracer.Start(ctx, "pubsub.router_acceptance_check")
 	// Phase 4: Router acceptance check
 	acceptStatus := p.rt.AcceptFrom(ctx,rpc.from)
-	
+	routerAcceptanceCheckSpan.End()
+
 	messagesProcessed := 0
 	messagesFiltered := 0
 	messagesIgnored := 0
