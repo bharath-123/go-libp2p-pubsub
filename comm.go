@@ -13,6 +13,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 )
@@ -42,8 +44,9 @@ func (p *PubSub) getHelloPacket() *RPC {
 }
 
 func (p *PubSub) handleNewStream(s network.Stream) {
+	_, handleNetworkStreamSpan := otelTracer.Start(context.Background(), "pubsub.handle_network_stream")
 	peer := s.Conn().RemotePeer()
-
+	
 	p.inboundStreamsMx.Lock()
 	other, dup := p.inboundStreams[peer]
 	if dup {
@@ -53,7 +56,8 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 	p.inboundStreams[peer] = s
 	p.inboundStreamsMx.Unlock()
 
-	defer func() {
+	defer func() {		
+		handleNetworkStreamSpan.End()		
 		p.inboundStreamsMx.Lock()
 		if p.inboundStreams[peer] == s {
 			delete(p.inboundStreams, peer)
@@ -61,11 +65,30 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		p.inboundStreamsMx.Unlock()
 	}()
 
+	var rpcSpan trace.Span
+	defer func() {
+		if rpcSpan != nil {
+			rpcSpan.End()
+		}
+	}()
+
 	r := msgio.NewVarintReaderSize(s, p.maxMessageSize)
 	for {
+		// Create span for each message read operation
+		_, msgSpan := otelTracer.Start(context.Background(), "pubsub.incoming.msg")
+		msgSpan.SetAttributes(
+			attribute.String("peer_id", peer.String()),
+		)
+
+		// ignore the values. We only want to know when the first bytes came in.
+		_, _ = r.NextMsgLen()
+		// Start the time once we've received the message length
+		timeWhenMessageReceived := time.Now()
 		msgbytes, err := r.ReadMsg()
 		if err != nil {
 			r.ReleaseMsg(msgbytes)
+			msgSpan.SetAttributes(attribute.String("error", err.Error()))
+			msgSpan.End()
 			if err != io.EOF {
 				s.Reset()
 				log.Debugf("error reading rpc from %s: %s", s.Conn().RemotePeer(), err)
@@ -78,26 +101,76 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 		if len(msgbytes) == 0 {
+			msgSpan.SetAttributes(attribute.String("result", "empty_message"))
+			msgSpan.End()
 			continue
 		}
 
+		messageSize := len(msgbytes)
+		
+		// Parse RPC and analyze content
 		rpc := new(RPC)
 		err = rpc.Unmarshal(msgbytes)
 		r.ReleaseMsg(msgbytes)
 		if err != nil {
+			msgSpan.SetAttributes(
+				attribute.String("result", "parse_error"), 
+				attribute.String("error", err.Error()),
+			)
+			msgSpan.End()
 			s.Reset()
 			log.Warnf("bogus rpc from %s: %s", s.Conn().RemotePeer(), err)
 			return
 		}
 
+		msgSpan.SetAttributes(attribute.Int64("time_to_read_rpc_ms", time.Since(timeWhenMessageReceived).Milliseconds()))
+
+		rpc.receivedAt = timeWhenMessageReceived
+		rpc.ctx, rpcSpan = otelTracer.Start(context.Background(), "pubsub.incoming.rpc")
+
+		// Analyze RPC content for detailed metrics
+		messageCount := len(rpc.GetPublish())
+		subscriptionCount := len(rpc.GetSubscriptions())
+		ihaveCount, iwantCount, graftCount, pruneCount, idontwantCount := 0, 0, 0, 0, 0
+		if rpc.Control != nil {
+			ihaveCount = len(rpc.Control.GetIhave())
+			iwantCount = len(rpc.Control.GetIwant())
+			graftCount = len(rpc.Control.GetGraft())
+			pruneCount = len(rpc.Control.GetPrune())
+			idontwantCount = len(rpc.Control.GetIdontwant())
+		}
+
+		// Queue to event loop
 		rpc.from = peer
+
+		queueSpanCtx, queueSpan := otelTracer.Start(rpc.ctx,"pubsub.incoming.rpc.queued")
+		rpc.queuedCtx = queueSpanCtx
+
 		select {
 		case p.incoming <- rpc:
 		case <-p.ctx.Done():
+			queueSpan.End()
+			msgSpan.SetAttributes(attribute.String("result", "stream_done"))
+			msgSpan.End()
 			// Close is useless because the other side isn't reading.
 			s.Reset()
 			return
 		}
+
+		// Set comprehensive message attributes
+		msgSpan.SetAttributes(
+			attribute.String("result", "sent_to_event_loop"),
+			attribute.Int("message_size_bytes", messageSize),
+			attribute.Int("message_count", messageCount),
+			attribute.Int("subscription_count", subscriptionCount),
+			attribute.Int("ihave_count", ihaveCount),
+			attribute.Int("iwant_count", iwantCount),
+			attribute.Int("graft_count", graftCount),
+			attribute.Int("prune_count", pruneCount),
+			attribute.Int("idontwant_count", idontwantCount),
+		)
+		
+		msgSpan.End()
 	}
 }
 

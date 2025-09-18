@@ -90,13 +90,13 @@ func (rs *RandomSubRouter) EnoughPeers(topic string, suggested int) bool {
 	return false
 }
 
-func (rs *RandomSubRouter) AcceptFrom(peer.ID) AcceptStatus {
+func (rs *RandomSubRouter) AcceptFrom(_ context.Context, _ peer.ID) AcceptStatus {
 	return AcceptAll
 }
 
 func (rs *RandomSubRouter) Preprocess(from peer.ID, msgs []*Message) {}
 
-func (rs *RandomSubRouter) HandleRPC(rpc *RPC) {}
+func (rs *RandomSubRouter) HandleRPC(ctx context.Context, rpc *RPC) {}
 
 func (rs *RandomSubRouter) Publish(msg *Message) {
 	from := msg.ReceivedFrom
