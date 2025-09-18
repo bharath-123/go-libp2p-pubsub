@@ -775,7 +775,7 @@ func WithAppSpecificRpcInspector(inspector func(peer.ID, *RPC) error) Option {
 
 // processLoop handles all inputs arriving on the channels
 func (p *PubSub) processLoop(ctx context.Context) {
-	ctx, loopSpan := startSpan(ctx, "pubsub.process_loop")
+	processLoopContext, loopSpan := startSpan(ctx, "pubsub.process_loop")
 	defer loopSpan.End()
 	
 	defer func() {
@@ -797,7 +797,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		incomingDepth := len(p.incoming)
 		
 		// Start span for this iteration
-		iterCtx, iterSpan := startSpan(ctx, "pubsub.process_loop_iteration")
+		iterCtx, iterSpan := startSpan(processLoopContext, "pubsub.process_loop_iteration")
 		iterationCount++
 		
 		iterSpan.SetAttributes(
