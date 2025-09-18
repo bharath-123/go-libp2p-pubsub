@@ -906,7 +906,10 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			preq.resp <- peers
 			
 		case rpc := <-p.incoming:
-			trace.SpanFromContext(rpc.queuedCtx).End()
+			rpcQueuedSpan := trace.SpanFromContext(rpc.queuedCtx)
+			rpcQueuedSpan.SetAttributes(attribute.Int("incoming_queue_depth", incomingDepth))
+			rpcQueuedSpan.SetAttributes(attribute.Int("sendMsg_queue_depth", sendMsgDepth))
+			rpcQueuedSpan.End()
 
 			idleTime = time.Since(loopStartTime)
 
