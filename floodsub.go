@@ -73,7 +73,7 @@ func (fs *FloodSubRouter) AcceptFrom(_ context.Context, _ peer.ID) AcceptStatus 
 
 func (fs *FloodSubRouter) Preprocess(from peer.ID, msgs []*Message) {}
 
-func (fs *FloodSubRouter) HandleRPC(rpc *RPC) {}
+func (fs *FloodSubRouter) HandleRPC(_ context.Context, rpc *RPC) {}
 
 func (fs *FloodSubRouter) Publish(msg *Message) {
 	from := msg.ReceivedFrom

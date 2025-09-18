@@ -214,7 +214,7 @@ type PubSubRouter interface {
 	Preprocess(from peer.ID, msgs []*Message)
 	// HandleRPC is invoked to process control messages in the RPC envelope.
 	// It is invoked after subscriptions and payload messages have been processed.
-	HandleRPC(*RPC)
+	HandleRPC(context.Context, *RPC)
 	// Publish is invoked to forward a new message that has been validated.
 	Publish(*Message)
 	// Join notifies the router that we want to receive and forward messages in a topic.
@@ -775,7 +775,7 @@ func WithAppSpecificRpcInspector(inspector func(peer.ID, *RPC) error) Option {
 
 // processLoop handles all inputs arriving on the channels
 func (p *PubSub) processLoop(ctx context.Context) {
-	processLoopContext, loopSpan := startSpan(ctx, "pubsub.process_loop")
+	processLoopContext, loopSpan := otelTracer.Start(ctx, "pubsub.process_loop")
 	defer loopSpan.End()
 	
 	defer func() {
@@ -797,7 +797,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		incomingDepth := len(p.incoming)
 		
 		// Start span for this iteration
-		iterCtx, iterSpan := startSpan(processLoopContext, "pubsub.process_loop_iteration")
+		iterCtx, iterSpan := otelTracer.Start(processLoopContext, "pubsub.process_loop_iteration")
 		iterationCount++
 		
 		iterSpan.SetAttributes(
@@ -910,22 +910,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 
 			idleTime = time.Since(loopStartTime)
 
-			ctx, eventSpan := startSpan(iterCtx, "pubsub.handle_incoming_rpc")
-			eventSpan.SetAttributes(
-				attribute.String("peer_id", rpc.from.String()),
-				attribute.Int("message_count", len(rpc.GetPublish())),
-				attribute.Int("subscription_count", len(rpc.GetSubscriptions())),
-			)
-			if rpc.Control != nil {
-				eventSpan.SetAttributes(
-					attribute.Int("ihave_count", len(rpc.Control.GetIhave())),
-					attribute.Int("iwant_count", len(rpc.Control.GetIwant())),
-					attribute.Int("graft_count", len(rpc.Control.GetGraft())),
-					attribute.Int("prune_count", len(rpc.Control.GetPrune())),
-				)
-			}
-			p.handleIncomingRPC(ctx, rpc)
-			eventSpan.End()
+			p.handleIncomingRPC(iterCtx, rpc)
 
 		case msg := <-p.sendMsg:
 			idleTime = time.Since(loopStartTime)
@@ -997,12 +982,12 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			idleTime = time.Since(loopStartTime)
 
 			log.Info("pubsub processloop shutting down")
-			iterSpan.SetAttributes(attribute.Int64("loop_idle_time", idleTime.Milliseconds()))
+			iterSpan.SetAttributes(attribute.Int64("loop_idle_time_ms", idleTime.Milliseconds()))
 			iterSpan.End()
 			return
 		}
 
-		iterSpan.SetAttributes(attribute.Int64("loop_idle_time", idleTime.Milliseconds()))
+		iterSpan.SetAttributes(attribute.Int64("loop_idle_time_ms", idleTime.Milliseconds()))
 		
 		iterSpan.End()
 	}
@@ -1363,11 +1348,25 @@ func (p *PubSub) notifyLeave(topic string, pid peer.ID) {
 }
 
 func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
-	ctx, handleRPCSpan := otelTracer.Start(ctx, "pubsub.handle_incoming_rpc_detailed", trace.WithLinks(trace.LinkFromContext(rpc.ctx)))
+	ctx, handleRPCSpan := otelTracer.Start(rpc.ctx, "pubsub.handle_incoming_rpc")
 	defer handleRPCSpan.End()
 	defer trace.SpanFromContext(rpc.ctx).End()
 
 	start := time.Now()
+
+	handleRPCSpan.SetAttributes(
+		attribute.String("peer_id", rpc.from.String()),
+		attribute.Int("message_count", len(rpc.GetPublish())),
+		attribute.Int("subscription_count", len(rpc.GetSubscriptions())),
+	)
+	if rpc.Control != nil {
+		handleRPCSpan.SetAttributes(
+			attribute.Int("ihave_count", len(rpc.Control.GetIhave())),
+			attribute.Int("iwant_count", len(rpc.Control.GetIwant())),
+			attribute.Int("graft_count", len(rpc.Control.GetGraft())),
+			attribute.Int("prune_count", len(rpc.Control.GetPrune())),
+		)
+	}
 
 	// Calculate timing from network arrival to event loop processing
 	var queueDelayMs int64
@@ -1448,23 +1447,20 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	// Phase 4: Router acceptance check
 	acceptStatus := p.rt.AcceptFrom(ctx,rpc.from)
 	
-	var acceptStatusStr string
 	messagesProcessed := 0
 	messagesFiltered := 0
 	messagesIgnored := 0
 	messagesPushed := 0
 
 	// Phase 5: Message processing based on acceptance
-	messageProcessingCtx, messageProcessingSpan := otelTracer.Start(ctx, "message_processing")
+	messageProcessingCtx, messageProcessingSpan := otelTracer.Start(ctx, "pubsub.message_processing")
 
 	switch acceptStatus {
 	case AcceptNone:
-		acceptStatusStr = "none"
 		handleRPCSpan.SetAttributes(attribute.String("router_result", "peer_graylisted"))
 		log.Debugf("received RPC from router graylisted peer %s; dropping RPC", rpc.from)
 
 	case AcceptControl:
-		acceptStatusStr = "control_only"
 		if len(rpc.GetPublish()) > 0 {
 			messagesIgnored = len(rpc.GetPublish())
 			handleRPCSpan.SetAttributes(attribute.String("router_result", "peer_throttled"))
@@ -1473,7 +1469,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		p.tracer.ThrottlePeer(rpc.from)
 
 	case AcceptAll:
-		acceptStatusStr = "all"
+		handleRPCSpan.SetAttributes(attribute.String("router_result", "peer_accepted"))
 		var toPush []*Message
 		for _, pmsg := range rpc.GetPublish() {
 			messagesProcessed++
@@ -1483,7 +1479,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 				continue
 			}
 
-			ctx, shouldPushSpan := otelTracer.Start(messageProcessingCtx, "should_push")
+			ctx, shouldPushSpan := otelTracer.Start(messageProcessingCtx, "pubsub.should_push")
 			msg := &Message{pmsg, "", rpc.from, nil, false, context.Background()}
 			if p.shouldPush(ctx, msg) {
 				msg.Ctx, _ = otelTracer.Start(context.Background(), "pubsub.message", trace.WithLinks(trace.LinkFromContext(rpc.ctx), trace.LinkFromContext(messageProcessingCtx)))
@@ -1493,12 +1489,12 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		}
 
 		// Phase 6: Router preprocessing
-		_, preprocessSpan := otelTracer.Start(messageProcessingCtx, "preprocess")
+		_, preprocessSpan := otelTracer.Start(messageProcessingCtx, "pubsub.preprocess")
 		p.rt.Preprocess(rpc.from, toPush)
 		preprocessSpan.End()
 
 		// Phase 7: Push messages to validation
-		_, pushSpan := otelTracer.Start(messageProcessingCtx, "validation_push")
+		_, pushSpan := otelTracer.Start(messageProcessingCtx, "pubsub.validation_push")
 		for _, msg := range toPush {
 			p.pushMsg(msg)
 			messagesPushed++
@@ -1508,13 +1504,10 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	messageProcessingSpan.End()
 
 	// Phase 8: Router control message handling
-	_, routerHandleSpan := otelTracer.Start(ctx, "router_handle")
-	p.rt.HandleRPC(rpc)
-	routerHandleSpan.End()
+	p.rt.HandleRPC(ctx, rpc)
 
 	// Set comprehensive attributes
 	handleRPCSpan.SetAttributes(
-		attribute.String("accept_status", acceptStatusStr),
 		attribute.Int("subscription_filtered", subscriptionFiltered),
 		attribute.Int("topics_joined", topicsJoined),
 		attribute.Int("topics_left", topicsLeft),

@@ -758,8 +758,8 @@ func (gs *GossipSubRouter) Preprocess(from peer.ID, msgs []*Message) {
 	}
 }
 
-func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
-	_, span := startSpan(rpc.ctx, "pubsub.handle_rpc")
+func (gs *GossipSubRouter) HandleRPC(ctx context.Context, rpc *RPC) {
+	_, span := startSpan(ctx, "pubsub.handle_rpc")
 	defer span.End()
 
 	span.SetAttributes(
@@ -773,10 +773,10 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 	}
 	
 	span.SetAttributes(
-		attribute.Int("pubsub.ihave_count", len(ctl.GetIhave())),
-		attribute.Int("pubsub.iwant_count", len(ctl.GetIwant())),
-		attribute.Int("pubsub.graft_count", len(ctl.GetGraft())),
-		attribute.Int("pubsub.prune_count", len(ctl.GetPrune())),
+		attribute.Int("ihave_count", len(ctl.GetIhave())),
+		attribute.Int("iwant_count", len(ctl.GetIwant())),
+		attribute.Int("graft_count", len(ctl.GetGraft())),
+		attribute.Int("prune_count", len(ctl.GetPrune())),
 	)
 
 	start := time.Now()
@@ -788,7 +788,7 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 	gs.handleIDontWant(rpc.from, ctl)
 
 	span.SetAttributes(
-		attribute.Int64("pubsub.handle_rpc_duration_ms", time.Since(start).Milliseconds()),
+		attribute.Int64("handle_rpc_duration_ms", time.Since(start).Milliseconds()),
 	)
 
 	if len(iwant) == 0 && len(ihave) == 0 && len(prune) == 0 {

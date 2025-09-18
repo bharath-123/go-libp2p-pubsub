@@ -116,7 +116,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			msgSpan.SetAttributes(
 				attribute.String("result", "parse_error"), 
 				attribute.String("error", err.Error()),
-				attribute.Int("msgSize", messageSize),
 			)
 			msgSpan.End()
 			s.Reset()
@@ -124,7 +123,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 
-		msgSpan.SetAttributes(attribute.Int64("time_to_read_rpc", time.Since(timeWhenMessageReceived).Milliseconds()))
+		msgSpan.SetAttributes(attribute.Int64("time_to_read_rpc_ms", time.Since(timeWhenMessageReceived).Milliseconds()))
 
 		rpc.receivedAt = timeWhenMessageReceived
 		rpc.ctx, rpcSpan = otelTracer.Start(context.Background(), "pubsub.incoming.rpc")
