@@ -737,7 +737,7 @@ func (gs *GossipSubRouter) manageAddrBook() {
 	}
 }
 
-func (gs *GossipSubRouter) AddPeer(p peer.ID, proto protocol.ID) {
+func (gs *GossipSubRouter) AddPeer(p peer.ID, proto protocol.ID, helloPacket *RPC) *RPC {
 	gs.logger.Debug("PEERUP: Add new peer using protocol", "peer", p, "protocol", proto)
 	gs.tracer.AddPeer(p, proto)
 	gs.peers[p] = proto
@@ -766,11 +766,7 @@ loop:
 	}
 	gs.outbound[p] = outbound
 
-	span.SetAttributes(
-		attribute.Bool("pubsub.outbound_connection", outbound),
-		attribute.Int("pubsub.connection_count", connectionCount),
-		attribute.Int64("pubsub.add_peer_duration_ms", time.Since(start).Milliseconds()),
-	)
+	return helloPacket
 }
 
 func (gs *GossipSubRouter) RemovePeer(p peer.ID) {
