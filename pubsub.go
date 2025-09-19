@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"math/bits"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/libp2p/go-libp2p-pubsub/internal/gologshim"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p-pubsub/timecache"
 	"go.opentelemetry.io/otel/attribute"
@@ -25,8 +27,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-
-	logging "github.com/ipfs/go-log/v2"
 )
 
 // DefaultMaximumMessageSize is 1mb.
@@ -45,8 +45,6 @@ var (
 	// subscription has been cancelled.
 	ErrSubscriptionCancelled = errors.New("subscription cancelled")
 )
-
-var log = logging.Logger("pubsub")
 
 type ProtocolMatchFn = func(protocol.ID) func(protocol.ID) bool
 
@@ -70,6 +68,10 @@ type PubSub struct {
 	disc *discover
 
 	tracer *pubsubTracer
+
+	logger *slog.Logger
+	// rpcLogger is a logger that is only used to log RPC sends and receives
+	rpcLogger *slog.Logger
 
 	peerFilter PeerFilter
 
@@ -473,10 +475,13 @@ type Option func(*PubSub) error
 
 // NewPubSub returns a new PubSub management object.
 func NewPubSub(ctx context.Context, h host.Host, rt PubSubRouter, opts ...Option) (*PubSub, error) {
+	log := gologshim.Logger("pubsub").With(slog.Attr{Key: "id", Value: slog.StringValue(h.ID().String())})
+
 	ps := &PubSub{
 		host:                  h,
 		ctx:                   ctx,
 		rt:                    rt,
+		logger:                log,
 		val:                   newValidation(),
 		peerFilter:            DefaultPeerFilter,
 		disc:                  &discover{},
@@ -728,6 +733,22 @@ func WithRawTracer(tracer RawTracer) Option {
 	}
 }
 
+// WithLogger customizes pubsub's logger.
+func WithLogger(logger *slog.Logger) Option {
+	return func(p *PubSub) error {
+		p.logger = logger
+		return nil
+	}
+}
+
+// WithRPCLogger customizes pubsub's RPC logger
+func WithRPCLogger(logger *slog.Logger) Option {
+	return func(p *PubSub) error {
+		p.rpcLogger = logger
+		return nil
+	}
+}
+
 // WithMaxMessageSize sets the global maximum message size for pubsub wire
 // messages. The default value is 1MiB (DefaultMaxMessageSize).
 //
@@ -847,8 +868,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 
 			q, ok := p.peers[pid]
 			if !ok {
-				log.Warn("new stream for unknown peer: ", pid)
-				eventSpan.SetAttributes(attribute.String("pubsub.result", "unknown_peer"))
+				p.logger.Warn("new stream for unknown peer", "peer", pid)
 				s.Reset()
 				eventSpan.End()
 				iterSpan.End()
@@ -856,8 +876,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			}
 
 			if p.blacklist.Contains(pid) {
-				log.Warn("closing stream for blacklisted peer: ", pid)
-				eventSpan.SetAttributes(attribute.String("pubsub.result", "blacklisted"))
+				p.logger.Warn("closing stream for blacklisted peer", "peer", pid)
 				q.Close()
 				delete(p.peers, pid)
 				s.Reset()
@@ -1061,12 +1080,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			eventSpan.End()
 
 		case pid := <-p.blacklistPeer:
-			_, eventSpan := startSpan(iterCtx, "pubsub.blacklist_peer")
-			eventSpan.SetAttributes(
-				attribute.String("pubsub.event_type", "blacklist_peer"),
-				// attribute.String("pubsub.peer_id", pid.String()),
-			)
-			log.Infof("Blacklisting peer %s", pid)
+			p.logger.Info("Blacklisting peer", "peer", pid)
 			p.blacklist.Add(pid)
 
 			topicsAffected := 0
@@ -1090,11 +1104,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			eventSpan.End()
 
 		case <-ctx.Done():
-			_, eventSpan := startSpan(iterCtx, "pubsub.shutdown")
-			eventSpan.SetAttributes(attribute.String("pubsub.event_type", "shutdown"))
-			log.Info("pubsub processloop shutting down")
-			eventSpan.End()
-			iterSpan.End()
+			p.logger.Info("pubsub processloop shutting down")
 			return
 		}
 
@@ -1122,12 +1132,12 @@ func (p *PubSub) handlePendingPeers() {
 		}
 
 		if _, ok := p.peers[pid]; ok {
-			log.Debug("already have connection to peer: ", pid)
+			p.logger.Debug("already have connection to peer", "peer", pid)
 			continue
 		}
 
 		if p.blacklist.Contains(pid) {
-			log.Warn("ignoring connection from blacklisted peer: ", pid)
+			p.logger.Warn("ignoring connection from blacklisted peer", "peer", pid)
 			continue
 		}
 
@@ -1171,13 +1181,13 @@ func (p *PubSub) handleDeadPeers() {
 		if p.host.Network().Connectedness(pid) == network.Connected {
 			backoffDelay, err := p.deadPeerBackoff.updateAndGet(pid)
 			if err != nil {
-				log.Debug(err)
+				p.logger.Debug("error updating backoff", "err", err, "peer", pid)
 				continue
 			}
 
 			// still connected, must be a duplicate connection being closed.
 			// we respawn the writer as we need to ensure there is a stream active
-			log.Debugf("peer declared dead but still connected; respawning writer: %s", pid)
+			p.logger.Debug("peer declared dead but still connected; respawning writer", "peer", pid)
 			rpcQueue := newRpcQueue(p.peerOutboundQueueSize)
 			rpcQueue.Push(p.getHelloPacket(), true)
 			p.peers[pid] = rpcQueue
@@ -1347,7 +1357,7 @@ func (p *PubSub) announce(topic string, sub bool) {
 	for pid, peer := range p.peers {
 		err := peer.Push(out, false)
 		if err != nil {
-			log.Infof("Can't send announce message to peer %s: queue full; scheduling retry", pid)
+			p.logger.Info("Can't send announce message to peer: queue full; scheduling retry", "peer", pid)
 			p.tracer.DropRPC(out, pid)
 			go p.announceRetry(pid, topic, sub)
 			continue
@@ -1390,7 +1400,7 @@ func (p *PubSub) doAnnounceRetry(pid peer.ID, topic string, sub bool) {
 	out := rpcWithSubs(subopt)
 	err := peer.Push(out, false)
 	if err != nil {
-		log.Infof("Can't send announce message to peer %s: queue full; scheduling retry", pid)
+		p.logger.Info("Can't send announce message to peer: queue full; scheduling retry", "peer", pid)
 		p.tracer.DropRPC(out, pid)
 		go p.announceRetry(pid, topic, sub)
 		return
@@ -1408,7 +1418,7 @@ func (p *PubSub) notifySubs(msg *Message) {
 		case f.ch <- msg:
 		default:
 			p.tracer.UndeliverableMessage(msg)
-			log.Infof("Can't deliver message to subscription for topic %s; subscriber too slow", topic)
+			p.logger.Info("Can't deliver message to subscription for topic; subscriber too slow", "topic", topic)
 		}
 	}
 }
@@ -1503,13 +1513,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 	if p.appSpecificRpcInspector != nil {
 		// check if the RPC is allowed by the external inspector
 		if err := p.appSpecificRpcInspector(rpc.from, rpc); err != nil {
-			handleRPCSpan.SetAttributes(
-				attribute.String("pubsub.result", "app_inspection_failed"),
-				attribute.String("pubsub.error", err.Error()),
-				attribute.Int64("pubsub.inspection_duration_ms", time.Since(inspectionStart).Milliseconds()),
-				attribute.Int64("pubsub.total_duration_ms", time.Since(start).Milliseconds()),
-			)
-			log.Debugf("application-specific inspection failed, rejecting incoming rpc: %s", err)
+			p.logger.Debug("application-specific inspection failed, rejecting incoming rpc", "err", err)
 			return // reject the RPC
 		}
 	}
@@ -1530,13 +1534,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 		originalCount := len(subs)
 		subs, err = p.subFilter.FilterIncomingSubscriptions(rpc.from, subs)
 		if err != nil {
-			handleRPCSpan.SetAttributes(
-				attribute.String("pubsub.result", "subscription_filter_failed"),
-				attribute.String("pubsub.error", err.Error()),
-				attribute.Int64("pubsub.subscription_duration_ms", time.Since(subscriptionStart).Milliseconds()),
-				attribute.Int64("pubsub.total_duration_ms", time.Since(start).Milliseconds()),
-			)
-			log.Debugf("subscription filter error: %s; ignoring RPC", err)
+			p.logger.Debug("subscription filter error; ignoring RPC", "err", err)
 			return
 		}
 		subscriptionFiltered = originalCount - len(subs)
@@ -1597,16 +1595,13 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 
 	switch acceptStatus {
 	case AcceptNone:
-		acceptStatusStr = "none"
-		handleRPCSpan.SetAttributes(attribute.String("pubsub.result", "peer_graylisted"))
-		log.Debugf("received RPC from router graylisted peer %s; dropping RPC", rpc.from)
+		p.logger.Debug("received RPC from router graylisted peer; dropping RPC", "peer", rpc.from)
+		return
 
 	case AcceptControl:
 		acceptStatusStr = "control_only"
 		if len(rpc.GetPublish()) > 0 {
-			messagesIgnored = len(rpc.GetPublish())
-			handleRPCSpan.SetAttributes(attribute.String("pubsub.result", "peer_throttled"))
-			log.Debugf("peer %s was throttled by router; ignoring %d payload messages", rpc.from, len(rpc.GetPublish()))
+			p.logger.Debug("peer was throttled by router; ignoring payload messages", "peer", rpc.from, "messageCount", len(rpc.GetPublish()))
 		}
 		p.tracer.ThrottlePeer(rpc.from)
 
@@ -1617,8 +1612,7 @@ func (p *PubSub) handleIncomingRPC(ctx context.Context, rpc *RPC) {
 			messagesProcessed++
 
 			if !(p.subscribedToMsg(pmsg) || p.canRelayMsg(pmsg)) {
-				messagesFiltered++
-				log.Debug("received message in topic we didn't subscribe to; ignoring message")
+				p.logger.Debug("received message in topic we didn't subscribe to; ignoring message")
 				continue
 			}
 
@@ -1727,28 +1721,28 @@ func (p *PubSub) shouldPush(ctx context.Context, msg *Message) bool {
 	src := msg.ReceivedFrom
 	// reject messages from blacklisted peers
 	if p.blacklist.Contains(src) {
-		log.Debugf("dropping message from blacklisted peer %s", src)
+		p.logger.Debug("dropping message from blacklisted peer", "peer", src)
 		p.tracer.RejectMessage(msg, RejectBlacklstedPeer)
 		return false
 	}
 
 	// even if they are forwarded by good peers
 	if p.blacklist.Contains(msg.GetFrom()) {
-		log.Debugf("dropping message from blacklisted source %s", src)
+		p.logger.Debug("dropping message from blacklisted source", "source", src)
 		p.tracer.RejectMessage(msg, RejectBlacklistedSource)
 		return false
 	}
 
 	err := p.checkSigningPolicy(msg)
 	if err != nil {
-		log.Debugf("dropping message from %s: %s", src, err)
+		p.logger.Debug("dropping message from peer", "peer", src, "err", err)
 		return false
 	}
 
 	// reject messages claiming to be from ourselves but not locally published
 	self := p.host.ID()
 	if peer.ID(msg.GetFrom()) == self && src != self {
-		log.Debugf("dropping message claiming to be from self but forwarded from %s", src)
+		p.logger.Debug("dropping message claiming to be from self but forwarded from peer", "peer", src)
 		p.tracer.RejectMessage(msg, RejectSelfOrigin)
 		return false
 	}

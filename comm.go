@@ -62,8 +62,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 	p.inboundStreamsMx.Lock()
 	other, dup := p.inboundStreams[peer]
 	if dup {
-		duplicateStreamDetected = true
-		log.Debugf("duplicate inbound stream from %s; resetting other stream", peer)
+		p.logger.Debug("duplicate inbound stream from; resetting other stream", "peer", peer)
 		other.Reset()
 	}
 	p.inboundStreams[peer] = s
@@ -99,16 +98,10 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		}
 	}()
 	for {
-		// Create span for each message read operation
-		_, msgSpan := startSpan(context.Background(), "pubsub.read_network_message")
-		msgSpan.SetAttributes(
-			// attribute.String("pubsub.peer_id", peer.String()),
-			attribute.Int("pubsub.message_sequence", totalMessages+1),
-		)
-
-		// ignore the values. We only want to know when the first bytes came in.
+		// Peek at the message length to know when we should mark the start time
+		// for measuring how long it took to receive a message.
 		_, _ = r.NextMsgLen()
-		readStart := time.Now()
+		start := time.Now()
 		msgbytes, err := r.ReadMsg()
 		readDuration := time.Since(readStart)
 
@@ -124,7 +117,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 
 			if err != io.EOF {
 				s.Reset()
-				log.Debugf("error reading rpc from %s: %s", s.Conn().RemotePeer(), err)
+				p.rpcLogger.Debug("error reading rpc", "from", s.Conn().RemotePeer(), "err", err)
 			} else {
 				// Just be nice. They probably won't read this
 				// but it doesn't hurt to send it.
@@ -165,27 +158,14 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			msgSpan.End()
 
 			s.Reset()
-			log.Warnf("bogus rpc from %s: %s", s.Conn().RemotePeer(), err)
+
+			p.rpcLogger.Warn("bogus rpc from", "peer", s.Conn().RemotePeer(), "err", err)
 			return
 		}
 
-		// Analyze RPC content for detailed metrics
-		messageCount := len(rpc.GetPublish())
-		subscriptionCount := len(rpc.GetSubscriptions())
-		controlMessageCount := 0
-		ihaveCount, iwantCount, graftCount, pruneCount, idontwantCount := 0, 0, 0, 0, 0
+		timeToReceive := time.Since(start)
+		p.rpcLogger.Debug("received", "peer", s.Conn().RemotePeer(), "duration_s", timeToReceive.Seconds(), "rpc", rpc)
 
-		if rpc.Control != nil {
-			ihaveCount = len(rpc.Control.GetIhave())
-			iwantCount = len(rpc.Control.GetIwant())
-			graftCount = len(rpc.Control.GetGraft())
-			pruneCount = len(rpc.Control.GetPrune())
-			idontwantCount = len(rpc.Control.GetIdontwant())
-			controlMessageCount = ihaveCount + iwantCount + graftCount + pruneCount + idontwantCount
-		}
-
-		// Queue to event loop
-		queueStart := time.Now()
 		rpc.from = peer
 		rpc.receivedAt = time.Now() // Set timestamp when RPC was recvd from network
 
@@ -215,60 +195,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			s.Reset()
 			return
 		}
-		queueDuration := time.Since(queueStart)
-		totalProcessingDuration := time.Since(readStart)
-
-		// Set comprehensive message attributes
-		msgSpan.SetAttributes(
-			attribute.String("pubsub.result", queueResult),
-			attribute.Int("pubsub.message_size_bytes", messageSize),
-			attribute.Int("pubsub.data_message_count", messageCount),
-			attribute.Int("pubsub.subscription_count", subscriptionCount),
-			attribute.Int("pubsub.control_message_count", controlMessageCount),
-			attribute.Int("pubsub.ihave_count", ihaveCount),
-			attribute.Int("pubsub.iwant_count", iwantCount),
-			attribute.Int("pubsub.graft_count", graftCount),
-			attribute.Int("pubsub.prune_count", pruneCount),
-			attribute.Int("pubsub.idontwant_count", idontwantCount),
-
-			// Timing breakdown
-			attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
-			attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
-			attribute.Int64("pubsub.queue_duration_us", queueDuration.Microseconds()),
-			attribute.Int64("pubsub.total_processing_duration_us", totalProcessingDuration.Microseconds()),
-
-			// Network arrival timestamp (for correlation with handleIncomingRPC)
-			attribute.String("pubsub.network_received_at", readStart.Format(time.RFC3339Nano)),
-		)
-
-		// Flag slow network operations
-		if readDuration > 10*time.Millisecond {
-			msgSpan.SetAttributes(attribute.Bool("pubsub.slow_network_read", true))
-		}
-
-		if parseDuration > 5*time.Millisecond {
-			msgSpan.SetAttributes(attribute.Bool("pubsub.slow_parse", true))
-		}
-
-		if queueDuration > 1*time.Millisecond {
-			msgSpan.SetAttributes(attribute.Bool("pubsub.slow_queue", true))
-		}
-
-		if totalProcessingDuration > 20*time.Millisecond {
-			msgSpan.SetAttributes(attribute.Bool("pubsub.slow_message_processing", true))
-		}
-
-		// Flag large messages
-		if messageSize > 100*1024 { // 100KB
-			msgSpan.SetAttributes(attribute.Bool("pubsub.large_message", true))
-		}
-
-		// Flag control message heavy RPCs
-		if controlMessageCount > 100 {
-			msgSpan.SetAttributes(attribute.Bool("pubsub.control_heavy_rpc", true))
-		}
-
-		msgSpan.End()
 	}
 }
 
@@ -288,7 +214,7 @@ func (p *PubSub) notifyPeerDead(pid peer.ID) {
 func (p *PubSub) handleNewPeer(ctx context.Context, pid peer.ID, outgoing *rpcQueue) {
 	s, err := p.host.NewStream(p.ctx, pid, p.rt.Protocols()...)
 	if err != nil {
-		log.Debug("opening new stream to peer: ", err, pid)
+		p.logger.Debug("error opening new stream to peer", "err", err, "peer", pid)
 
 		select {
 		case p.newPeerError <- pid:
@@ -320,7 +246,7 @@ func (p *PubSub) handlePeerDead(s network.Stream) {
 
 	_, err := s.Read([]byte{0})
 	if err == nil {
-		log.Debugf("unexpected message from %s", pid)
+		p.logger.Debug("unexpected message from peer", "peer", pid)
 	}
 
 	s.Reset()
@@ -341,21 +267,26 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 		}
 
 		_, err = s.Write(buf)
-		return err
+		if err != nil {
+			p.rpcLogger.Debug("failed to send message", "peer", s.Conn().RemotePeer(), "rpc", rpc, "err", err)
+			return err
+		}
+		p.rpcLogger.Debug("sent", "peer", s.Conn().RemotePeer(), "rpc", rpc)
+		return nil
 	}
 
 	defer s.Close()
 	for ctx.Err() == nil {
 		rpc, err := outgoing.Pop(ctx)
 		if err != nil {
-			log.Debugf("popping message from the queue to send to %s: %s", s.Conn().RemotePeer(), err)
+			p.logger.Debug("error popping message from the queue to send to peer", "peer", s.Conn().RemotePeer(), "err", err)
 			return
 		}
 
 		err = writeRpc(rpc)
 		if err != nil {
 			s.Reset()
-			log.Debugf("writing message to %s: %s", s.Conn().RemotePeer(), err)
+			p.logger.Debug("error writing message to peer", "peer", s.Conn().RemotePeer(), "err", err)
 			return
 		}
 	}
