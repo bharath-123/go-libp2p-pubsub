@@ -13,8 +13,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-msgio"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 )
@@ -46,19 +44,6 @@ func (p *PubSub) getHelloPacket() *RPC {
 func (p *PubSub) handleNewStream(s network.Stream) {
 	peer := s.Conn().RemotePeer()
 
-	// Create stream-level span for the entire stream lifecycle
-	_, streamSpan := startSpan(context.Background(), "pubsub.handle_new_stream")
-	streamSpan.SetAttributes(
-		// attribute.String("pubsub.peer_id", peer.String()),
-		attribute.String("pubsub.stream_direction", "inbound"),
-	)
-	defer streamSpan.End()
-
-	streamStart := time.Now()
-	totalMessages := 0
-	totalBytes := 0
-	duplicateStreamDetected := false
-
 	p.inboundStreamsMx.Lock()
 	other, dup := p.inboundStreams[peer]
 	if dup {
@@ -69,20 +54,6 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 	p.inboundStreamsMx.Unlock()
 
 	defer func() {
-		streamDuration := time.Since(streamStart)
-
-		// Set final stream metrics
-		streamSpan.SetAttributes(
-			attribute.Int("pubsub.total_messages_received", totalMessages),
-			attribute.Int("pubsub.total_bytes_received", totalBytes),
-			attribute.Int64("pubsub.stream_duration_ms", streamDuration.Milliseconds()),
-			attribute.Bool("pubsub.duplicate_stream_detected", duplicateStreamDetected),
-		)
-
-		if streamDuration > 10*time.Second {
-			streamSpan.SetAttributes(attribute.Bool("pubsub.long_lived_stream", true))
-		}
-
 		p.inboundStreamsMx.Lock()
 		if p.inboundStreams[peer] == s {
 			delete(p.inboundStreams, peer)
@@ -91,30 +62,15 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 	}()
 
 	r := msgio.NewVarintReaderSize(s, p.maxMessageSize)
-	var rpcSpan trace.Span
-	defer func() {
-		if rpcSpan != nil {
-			rpcSpan.End()
-		}
-	}()
 	for {
 		// Peek at the message length to know when we should mark the start time
 		// for measuring how long it took to receive a message.
 		_, _ = r.NextMsgLen()
 		start := time.Now()
 		msgbytes, err := r.ReadMsg()
-		readDuration := time.Since(readStart)
 
 		if err != nil {
 			r.ReleaseMsg(msgbytes)
-
-			msgSpan.SetAttributes(
-				attribute.String("pubsub.result", "read_error"),
-				attribute.String("pubsub.error", err.Error()),
-				attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
-			)
-			msgSpan.End()
-
 			if err != io.EOF {
 				s.Reset()
 				p.rpcLogger.Debug("error reading rpc", "from", s.Conn().RemotePeer(), "err", err)
@@ -127,38 +83,12 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 
-		if len(msgbytes) == 0 {
-			msgSpan.SetAttributes(
-				attribute.String("pubsub.result", "empty_message"),
-				attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
-			)
-			msgSpan.End()
-			continue
-		}
-
-		messageSize := len(msgbytes)
-		totalBytes += messageSize
-
-		// Parse RPC and analyze content
-		parseStart := time.Now()
 		rpc := new(RPC)
 		err = rpc.Unmarshal(msgbytes)
 		r.ReleaseMsg(msgbytes)
-		parseDuration := time.Since(parseStart)
-		rpc.ctx, rpcSpan = startSpan(context.Background(), "pubsub.rpc.incoming")
 
 		if err != nil {
-			msgSpan.SetAttributes(
-				attribute.String("pubsub.result", "parse_error"),
-				attribute.String("pubsub.error", err.Error()),
-				attribute.Int("pubsub.message_size_bytes", messageSize),
-				attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
-				attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
-			)
-			msgSpan.End()
-
 			s.Reset()
-
 			p.rpcLogger.Warn("bogus rpc from", "peer", s.Conn().RemotePeer(), "err", err)
 			return
 		}
@@ -169,28 +99,10 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		rpc.from = peer
 		rpc.receivedAt = time.Now() // Set timestamp when RPC was recvd from network
 
-		var queueSpan trace.Span
-		rpc.queuedCtx, queueSpan = otelTracer.Start(rpc.ctx, "pubsub.incoming.rpc.queued")
 
-		var queueResult string
 		select {
 		case p.incoming <- rpc:
-			queueResult = "queued"
-			totalMessages++
 		case <-p.ctx.Done():
-			queueSpan.End()
-			queueResult = "context_cancelled"
-			msgSpan.SetAttributes(
-				attribute.String("pubsub.result", queueResult),
-				attribute.Int("pubsub.message_size_bytes", messageSize),
-				attribute.Int("pubsub.data_message_count", messageCount),
-				attribute.Int("pubsub.subscription_count", subscriptionCount),
-				attribute.Int("pubsub.control_message_count", controlMessageCount),
-				attribute.Int64("pubsub.read_duration_us", readDuration.Microseconds()),
-				attribute.Int64("pubsub.parse_duration_us", parseDuration.Microseconds()),
-			)
-			msgSpan.End()
-
 			// Close is useless because the other side isn't reading.
 			s.Reset()
 			return

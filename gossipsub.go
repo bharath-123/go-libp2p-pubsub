@@ -24,8 +24,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	"go.uber.org/zap/zapcore"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
 )
@@ -759,7 +757,6 @@ func (gs *GossipSubRouter) AddPeer(p peer.ID, proto protocol.ID, helloPacket *RP
 	// track the connection direction
 	outbound := false
 	conns := gs.p.host.Network().ConnsToPeer(p)
-	connectionCount := len(conns)
 loop:
 	for _, c := range conns {
 		stat := c.Stat()
@@ -793,26 +790,14 @@ func (gs *GossipSubRouter) RemovePeer(p peer.ID) {
 	}
 	delete(gs.peers, p)
 	for _, peers := range gs.mesh {
-		if _, exists := peers[p]; exists {
-			meshTopics++
-		}
 		delete(peers, p)
 	}
 	for _, peers := range gs.fanout {
-		if _, exists := peers[p]; exists {
-			fanoutTopics++
-		}
 		delete(peers, p)
 	}
 	delete(gs.gossip, p)
 	delete(gs.control, p)
 	delete(gs.outbound, p)
-
-	span.SetAttributes(
-		attribute.Int("pubsub.mesh_topics", meshTopics),
-		attribute.Int("pubsub.fanout_topics", fanoutTopics),
-		attribute.Int64("pubsub.remove_peer_duration_ms", time.Since(start).Milliseconds()),
-	)
 }
 
 func (gs *GossipSubRouter) EnoughPeers(topic string, suggested int) bool {
@@ -844,20 +829,16 @@ func (gs *GossipSubRouter) EnoughPeers(topic string, suggested int) bool {
 	return false
 }
 
-func (gs *GossipSubRouter) AcceptFrom(ctx context.Context, p peer.ID) AcceptStatus {
+func (gs *GossipSubRouter) AcceptFrom(p peer.ID) AcceptStatus {
 	_, direct := gs.direct[p]
 	if direct {
 		return AcceptAll
 	}
 
-	_, span := otelTracer.Start(ctx, "check_score")
 	if gs.score.Score(p) < gs.graylistThreshold {
 		return AcceptNone
 	}
-	span.End()
 
-	_, span = otelTracer.Start(ctx, "check_peerGater")
-	defer span.End()
 	return gs.gate.AcceptFrom(p)
 }
 
@@ -900,32 +881,14 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 
 	ctl := rpc.GetControl()
 	if ctl == nil {
-		span.SetAttributes(attribute.Bool("pubsub.has_control", false))
 		return
 	}
-
-	span.SetAttributes(
-		attribute.Bool("pubsub.has_control", true),
-		attribute.Int("pubsub.ihave_count", len(ctl.GetIhave())),
-		attribute.Int("pubsub.iwant_count", len(ctl.GetIwant())),
-		attribute.Int("pubsub.graft_count", len(ctl.GetGraft())),
-		attribute.Int("pubsub.prune_count", len(ctl.GetPrune())),
-	)
-
-	start := time.Now()
 
 	iwant := gs.handleIHave(rpc.from, ctl)
 	ihave := gs.handleIWant(rpc.from, ctl)
 	prune := gs.handleGraft(rpc.from, ctl)
 	gs.handlePrune(rpc.from, ctl)
 	gs.handleIDontWant(rpc.from, ctl)
-
-	span.SetAttributes(
-		attribute.Int("pubsub.iwant_response_count", len(iwant)),
-		attribute.Int("pubsub.ihave_response_count", len(ihave)),
-		attribute.Int("pubsub.prune_response_count", len(prune)),
-		attribute.Int64("pubsub.handle_rpc_duration_ms", time.Since(start).Milliseconds()),
-	)
 
 	if len(iwant) == 0 && len(ihave) == 0 && len(prune) == 0 {
 		return

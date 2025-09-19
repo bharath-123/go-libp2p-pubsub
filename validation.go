@@ -626,10 +626,8 @@ func (val *validatorImpl) validateMsg(ctx context.Context, src peer.ID, msg *Mes
 		defer cancel()
 	}
 
-	start := time.Now()
 	r := val.validate(ctx, src, msg)
 	took := time.Since(start)
-	log.Debugf("validation done; took %s", took)
 	msg.ValidationDuration += took
 
 	switch r {

@@ -68,7 +68,7 @@ func (fs *FloodSubRouter) EnoughPeers(topic string, suggested int) bool {
 	return false
 }
 
-func (fs *FloodSubRouter) AcceptFrom(_ context.Context, _ peer.ID) AcceptStatus {
+func (fs *FloodSubRouter) AcceptFrom(_ peer.ID) AcceptStatus {
 	return AcceptAll
 }
 
