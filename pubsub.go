@@ -827,6 +827,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "new_peers", "")
 
+			p.metrics.IncrementEventCount("new_peers", "")
+
 			startTime := time.Now()
 			p.handlePendingPeers()
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "new_peers", "")
@@ -834,6 +836,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case treq := <-p.newPeerStream:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "new_peer_stream", "")
+
+			p.metrics.IncrementEventCount("new_peer_stream", "")
 
 			startTime := time.Now()
 
@@ -866,6 +870,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "new_peer_error", "")
 
+			p.metrics.IncrementEventCount("new_peer_error", "")
+
 			startTime := time.Now()
 			pid := treq.Request
 
@@ -876,6 +882,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "peer_dead", "")
 
+			p.metrics.IncrementEventCount("peer_dead", "")
+
 			startTime := time.Now()
 			p.handleDeadPeers()
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "peer_dead", "")
@@ -883,6 +891,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case trequest := <-p.getTopics:
 			queueDelay := time.Since(trequest.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "get_topics", "")
+
+			p.metrics.IncrementEventCount("get_topics", "")
 
 			startTime := time.Now()
 			treq := trequest.Request
@@ -897,6 +907,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "add_topic", "")
 
+			p.metrics.IncrementEventCount("add_topic", "")
+
 			startTime := time.Now()
 			topic := treq.Request
 			p.handleAddTopic(topic)
@@ -905,6 +917,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case treq := <-p.rmTopic:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "rm_topic", "")
+
+			p.metrics.IncrementEventCount("rm_topic", "")
 
 			startTime := time.Now()
 			topic := treq.Request
@@ -915,6 +929,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "rm_subscription", "")
 
+			p.metrics.IncrementEventCount("rm_subscription", "")
+
 			startTime := time.Now()
 			sub := treq.Request
 			p.handleRemoveSubscription(sub)
@@ -923,6 +939,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case treq := <-p.addSub:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "add_subscription", "")
+
+			p.metrics.IncrementEventCount("add_subscription", "")
 
 			startTime := time.Now()
 			sub := treq.Request
@@ -933,6 +951,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "add_relay", "")
 
+			p.metrics.IncrementEventCount("add_relay", "")
+
 			startTime := time.Now()
 			relay := treq.Request
 			p.handleAddRelay(relay)
@@ -942,6 +962,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "rm_relay", "")
 
+			p.metrics.IncrementEventCount("rm_relay", "")
+
 			startTime := time.Now()
 			topic := treq.Request
 			p.handleRemoveRelay(topic)
@@ -950,6 +972,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case treq := <-p.getPeers:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "get_peers", "")
+
+			p.metrics.IncrementEventCount("get_peers", "")
 
 			startTime := time.Now()
 			preq := treq.Request
@@ -976,6 +1000,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "handle_incoming_rpc", "")
 
+			p.metrics.IncrementEventCount("handle_incoming_rpc", "")
+
 			startTime := time.Now()
 			rpc := treq.Request
 			p.handleIncomingRPC(rpc)
@@ -985,30 +1011,34 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "publish_message", "")
 
+			p.metrics.IncrementEventCount("publish_message", "")
+
 			startTime := time.Now()
 			msg := treq.Request
 			p.publishMessage(msg)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "publish_message", "")
 
-			p.metrics.IncrementTopicMsgPublished(msg.GetTopic())
+			p.metrics.IncrementTopicMsgPublished(msg.GetTopic(), 1)
 
 		case treq := <-p.sendMessageBatch:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "send_message_batch", "")
+
+			p.metrics.IncrementEventCount("send_message_batch", "")
 
 			startTime := time.Now()
 			batchAndOpts := treq.Request
 			p.publishMessageBatch(batchAndOpts)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "send_message_batch", "")
 
-			// TODO - we can just increment the metric by len(batchAndOpts.messages)
-			for _, msg := range batchAndOpts.messages {
-				p.metrics.IncrementTopicMsgPublished(msg.GetTopic())
-			}
+			p.metrics.IncrementTopicMsgPublished(batchAndOpts.messages[0].GetTopic(), int64(len(batchAndOpts.messages)))
+			
 
 		case treq := <-p.addVal:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "add_validator", "")
+
+			p.metrics.IncrementEventCount("add_validator", "")
 
 			startTime := time.Now()
 			req := treq.Request
@@ -1019,6 +1049,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "rm_validator", "")
 
+			p.metrics.IncrementEventCount("rm_validator", "")
+
 			startTime := time.Now()
 			req := treq.Request
 			p.val.RemoveValidator(req)
@@ -1028,6 +1060,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "eval", treq.EvalMethodName)
 
+			p.metrics.IncrementEventCount("eval", treq.EvalMethodName)
+
 			startTime := time.Now()
 			treq.Request()
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "eval", treq.EvalMethodName)
@@ -1035,6 +1069,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 		case treq := <-p.blacklistPeer:
 			queueDelay := time.Since(treq.ReceivedAt)
 			p.metrics.RecordEventLoopWaitTeam(queueDelay, "blacklist_peer", "")
+
+			p.metrics.IncrementEventCount("blacklist_peer", "")
 
 			startTime := time.Now()
 			pid := treq.Request

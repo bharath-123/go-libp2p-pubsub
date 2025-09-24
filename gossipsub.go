@@ -1564,7 +1564,9 @@ func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bo
 		gs.doDropRPC(rpc, p, "queue full")
 		return
 	}
-	gs.p.metrics.RecordOutgoingRpcQueueSize(int64(q.queue.Len()))
+
+	gs.p.metrics.RecordPriorityOutgoingRpcQueueSize(int64(len(q.queue.priority)))
+	gs.p.metrics.RecordNormalOutgoingRpcQueueSize(int64(len(q.queue.normal)))
 
 	if len(rpc.GetPublish()) > 0 {
 		for _, msg := range rpc.GetPublish() {

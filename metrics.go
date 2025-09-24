@@ -44,6 +44,8 @@ type metrics struct {
 	eventLoopWaitTime metric.Int64Histogram // DONE
 	// time spent by different events
 	eventProcessingTime metric.Int64Histogram // DONE
+	// the count of the number times each branch executed in the event loop
+	eventCount metric.Int64Counter // DONE
 
 	// the number of times, we have received an IDONTWANT message
 	iDontWantMsgRecvd metric.Int64Counter // DONE
@@ -76,8 +78,10 @@ type metrics struct {
 	// the number of messages received per topic unfiltered(with duplicates)
 	topicMsgRecvdUnfiltered metric.Int64Counter // DONE
 
-	// the size of the outgoing rpc queue
-	outGoingRpcQueueSize metric.Int64Histogram
+	// the size of the priority outgoing rpc queue
+	outGoingPriorityRpcQueueSize metric.Int64Histogram
+	// the size of the normal outgoing rpc queue
+	outGoingNormalRpcQueueSize metric.Int64Histogram
 
 	// TODO - validation related metrics
 	duplicateMessages  metric.Int64Counter
@@ -142,10 +146,19 @@ func InitMetrics(ps *PubSub) error {
 		return err
 	}
 
-	ps.metrics.outGoingRpcQueueSize, err = meter.Int64Histogram(
-		metricPrefix+"outgoing_rpc_queue_size",
-		metric.WithDescription("The size of the outgoing rpc queue"),
-		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 50, 70, 100),
+	ps.metrics.outGoingPriorityRpcQueueSize, err = meter.Int64Histogram(
+		metricPrefix+"outgoing_priority_rpc_queue_size",
+		metric.WithDescription("The size of the priority outgoing rpc queue"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 50, 70, 100, 500, 1000),
+	)
+	if err != nil {
+		return err
+	}
+
+	ps.metrics.outGoingNormalRpcQueueSize, err = meter.Int64Histogram(
+		metricPrefix+"outgoing_normal_rpc_queue_size",
+		metric.WithDescription("The size of the normal outgoing rpc queue"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 50, 70, 100, 500, 1000),
 	)
 	if err != nil {
 		return err
@@ -225,6 +238,14 @@ func InitMetrics(ps *PubSub) error {
 		metric.WithDescription("The time spent processing different events in the event loop"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	)
+	if err != nil {
+		return err
+	}
+
+	ps.metrics.eventCount, err = meter.Int64Counter(
+		metricPrefix+"event_count",
+		metric.WithDescription("The count of the number times each branch executed in the event loop"),
 	)
 	if err != nil {
 		return err
@@ -359,6 +380,15 @@ func InitMetrics(ps *PubSub) error {
 	return nil
 }
 
+func (m *metrics) IncrementEventCount(eventType string, evalMethodName string) {
+	attrs := []attribute.KeyValue{}
+	if evalMethodName != "" {
+		attrs = append(attrs, attribute.String("eval_method_name", evalMethodName))
+	}
+	attrs = append(attrs, attribute.String("event_type", eventType))
+	m.eventCount.Add(context.Background(), 1, metric.WithAttributes(attrs...))
+}
+
 func (m *metrics) RecordEventLoopWaitTeam(waitTime time.Duration, eventType string, evalMethodName string) {
 	attrs := []attribute.KeyValue{}
 	if evalMethodName != "" {
@@ -385,8 +415,12 @@ func (m *metrics) RecordRpcIncomingChannelContentionTime(contentionTime time.Dur
 	m.rpcIncomingChannelContentionTime.Record(context.Background(), contentionTime.Microseconds())
 }
 
-func (m *metrics) RecordOutgoingRpcQueueSize(size int64) {
-	m.outGoingRpcQueueSize.Record(context.Background(), size)
+func (m *metrics) RecordPriorityOutgoingRpcQueueSize(size int64) {
+	m.outGoingPriorityRpcQueueSize.Record(context.Background(), size)
+}
+
+func (m *metrics) RecordNormalOutgoingRpcQueueSize(size int64) {
+	m.outGoingNormalRpcQueueSize.Record(context.Background(), size)
 }
 
 func (m *metrics) RecordMessageSize(msgSize int64) {
@@ -453,7 +487,7 @@ func (m *metrics) IncrementTopicBytesSent(bytes int64, topic string) {
 	m.topicBytesSent.Add(context.Background(), bytes, metric.WithAttributes(attribute.String("topic", topic)))
 }
 
-func (m *metrics) IncrementTopicMsgPublished(topic string) {
+func (m *metrics) IncrementTopicMsgPublished(topic string, count int64) {
 	m.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
 }
 
