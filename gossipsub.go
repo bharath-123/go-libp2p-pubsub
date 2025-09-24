@@ -319,7 +319,9 @@ func DefaultGossipSubRouter(h host.Host) *GossipSubRouter {
 		if rt.score != nil {
 			rt.score.AddPenalty(p, 10)
 		}
-	}, rt.sendRPC)
+	}, func(p peer.ID, r *RPC, b bool) {
+		rt.sendRPC(p, r, b, nil)
+	})
 
 	return rt
 }
@@ -868,7 +870,7 @@ func (gs *GossipSubRouter) Preprocess(from peer.ID, msgs []*Message) {
 			if gs.feature(GossipSubFeatureIdontwant, gs.peers[p]) {
 				idontwant := []*pb.ControlIDontWant{{MessageIDs: mids}}
 				out := rpcWithControl(nil, nil, nil, nil, nil, idontwant)
-				gs.sendRPC(p, out, true)
+				gs.sendRPC(p, out, true, nil)
 			}
 		}
 	}
@@ -893,7 +895,7 @@ func (gs *GossipSubRouter) HandleRPC(rpc *RPC) {
 	}
 
 	out := rpcWithControl(ihave, nil, iwant, nil, prune, nil)
-	gs.sendRPC(rpc.from, out, false)
+	gs.sendRPC(rpc.from, out, false, nil)
 }
 
 func (gs *GossipSubRouter) handleIHave(p peer.ID, ctl *pb.ControlMessage) []*pb.ControlIWant {
@@ -967,6 +969,8 @@ func (gs *GossipSubRouter) handleIHave(p peer.ID, ctl *pb.ControlMessage) []*pb.
 
 	gs.gossipTracer.AddPromise(p, iwantlst)
 
+	gs.p.metrics.IncrementIWantMsgSent()
+
 	return []*pb.ControlIWant{{MessageIDs: iwantlst}}
 }
 
@@ -980,9 +984,11 @@ func (gs *GossipSubRouter) handleIWant(p peer.ID, ctl *pb.ControlMessage) []*pb.
 
 	ihave := make(map[string]*pb.Message)
 	for _, iwant := range ctl.GetIwant() {
+		gs.p.metrics.IncrementIWantMsgRecvd()
 		for _, mid := range iwant.GetMessageIDs() {
 			// Check if that peer has sent IDONTWANT before, if so don't send them the message
 			if _, ok := gs.unwanted[p][computeChecksum(mid)]; ok {
+				gs.p.metrics.effectiveIDONTWANTs.Add(context.Background(), 1)
 				continue
 			}
 
@@ -1027,6 +1033,8 @@ func (gs *GossipSubRouter) handleGraft(p peer.ID, ctl *pb.ControlMessage) []*pb.
 
 	for _, graft := range ctl.GetGraft() {
 		topic := graft.GetTopicID()
+
+		gs.p.metrics.IncrementGraftMsgRecvdPerTopic(topic)
 
 		if !gs.p.peerFilter(p, topic) {
 			continue
@@ -1121,6 +1129,9 @@ func (gs *GossipSubRouter) handlePrune(p peer.ID, ctl *pb.ControlMessage) {
 
 	for _, prune := range ctl.GetPrune() {
 		topic := prune.GetTopicID()
+
+		gs.p.metrics.IncrementPruneMsgRecvdPerTopic(topic)
+
 		peers, ok := gs.mesh[topic]
 		if !ok {
 			continue
@@ -1166,11 +1177,17 @@ func (gs *GossipSubRouter) handleIDontWant(p peer.ID, ctl *pb.ControlMessage) {
 	// Remember all the unwanted message ids
 mainIDWLoop:
 	for _, idontwant := range ctl.GetIdontwant() {
+		gs.p.metrics.IncrementIDontWantMsgRecvdCount()
 		for _, mid := range idontwant.GetMessageIDs() {
 			// IDONTWANT flood protection
 			if totalUnwantedIds >= gs.params.MaxIDontWantLength {
 				gs.logger.Debug("IDONWANT: peer has advertised too many ids within this message; ignoring", "peer", p, "idCount", totalUnwantedIds)
 				break mainIDWLoop
+			}
+
+			q, ok := gs.p.peers[p]
+			if ok {
+				q.Cancel(mid)
 			}
 
 			totalUnwantedIds++
@@ -1283,21 +1300,24 @@ func (gs *GossipSubRouter) connector() {
 
 func (gs *GossipSubRouter) PublishBatch(messages []*Message, opts *BatchPublishOptions) {
 	strategy := opts.Strategy
+	msgIDs := make([]string, 0, len(messages))
 	for _, msg := range messages {
 		msgID := gs.p.idGen.ID(msg)
+		msgIDs = append(msgIDs, msgID)
 		for p, rpc := range gs.rpcs(msg) {
 			strategy.AddRPC(p, msgID, rpc)
 		}
 	}
 
 	for p, rpc := range strategy.All() {
-		gs.sendRPC(p, rpc, false)
+		gs.sendRPC(p, rpc, false, msgIDs)
 	}
 }
 
 func (gs *GossipSubRouter) Publish(msg *Message) {
+	msgIDs := []string{msg.ID}
 	for p, rpc := range gs.rpcs(msg) {
-		gs.sendRPC(p, rpc, false)
+		gs.sendRPC(p, rpc, false, msgIDs)
 	}
 }
 
@@ -1364,6 +1384,7 @@ func (gs *GossipSubRouter) rpcs(msg *Message) iter.Seq2[peer.ID, *RPC] {
 				// Check if it has already received an IDONTWANT for the message.
 				// If so, don't send it to the peer
 				if _, ok := gs.unwanted[p][csum]; ok {
+					gs.p.metrics.effectiveIDONTWANTs.Add(context.Background(), 1)
 					continue
 				}
 				tosend[p] = struct{}{}
@@ -1465,16 +1486,18 @@ func (gs *GossipSubRouter) Leave(topic string) {
 func (gs *GossipSubRouter) sendGraft(p peer.ID, topic string) {
 	graft := []*pb.ControlGraft{{TopicID: &topic}}
 	out := rpcWithControl(nil, nil, nil, graft, nil, nil)
-	gs.sendRPC(p, out, false)
+	gs.p.metrics.IncrementGraftMsgSentPerTopic(topic)
+	gs.sendRPC(p, out, false, nil)
 }
 
 func (gs *GossipSubRouter) sendPrune(p peer.ID, topic string, isUnsubscribe bool) {
 	prune := []*pb.ControlPrune{gs.makePrune(p, topic, gs.doPX, isUnsubscribe)}
 	out := rpcWithControl(nil, nil, nil, nil, prune, nil)
-	gs.sendRPC(p, out, false)
+	gs.p.metrics.IncrementPruneMsgSentPerTopic(topic)
+	gs.sendRPC(p, out, false, nil)
 }
 
-func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool) {
+func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool, msgIDs []string) {
 	// do we own the RPC?
 	own := false
 
@@ -1505,7 +1528,7 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool) {
 
 	// If we're below the max message size, go ahead and send
 	if out.Size() < gs.p.maxMessageSize {
-		gs.doSendRPC(out, p, q, urgent)
+		gs.doSendRPC(out, p, q, urgent, msgIDs)
 		return
 	}
 
@@ -1516,7 +1539,7 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool) {
 			gs.doDropRPC(out, p, fmt.Sprintf("Dropping oversized RPC. Size: %d, limit: %d. (Over by %d bytes)", rpc.Size(), gs.p.maxMessageSize, rpc.Size()-gs.p.maxMessageSize))
 			continue
 		}
-		gs.doSendRPC(&rpc, p, q, urgent)
+		gs.doSendRPC(&rpc, p, q, urgent, msgIDs)
 	}
 }
 
@@ -1530,24 +1553,39 @@ func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 	}
 }
 
-func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bool) {
+func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bool, msgIDs []string) {
 	var err error
 	if urgent {
-		err = q.UrgentPush(rpc, false)
+		err = q.UrgentPush(rpc, false, msgIDs)
 	} else {
-		err = q.Push(rpc, false)
+		err = q.Push(rpc, false, msgIDs)
 	}
 	if err != nil {
 		gs.doDropRPC(rpc, p, "queue full")
 		return
 	}
+
+	gs.p.metrics.RecordPriorityOutgoingRpcQueueSize(int64(len(q.queue.priority)))
+	gs.p.metrics.RecordNormalOutgoingRpcQueueSize(int64(len(q.queue.normal)))
+
+	if len(rpc.GetPublish()) > 0 {
+		for _, msg := range rpc.GetPublish() {
+			if msg.GetTopic() != "" {
+				gs.p.metrics.IncrementTopicMsgSent(msg.GetTopic())
+				gs.p.metrics.IncrementTopicBytesSent(int64(msg.Size()), msg.GetTopic())
+			}
+		}
+	}
+
 	gs.tracer.SendRPC(rpc, p)
 }
 
 func (gs *GossipSubRouter) heartbeatTimer() {
 	time.Sleep(gs.params.HeartbeatInitialDelay)
+	treq := NewTimedRequest(gs.heartbeat, time.Now())
+	treq.AddEvalMethodName("gossipsub.heartbeat")
 	select {
-	case gs.p.eval <- gs.heartbeat:
+	case gs.p.eval <- treq:
 	case <-gs.p.ctx.Done():
 		return
 	}
@@ -1558,8 +1596,10 @@ func (gs *GossipSubRouter) heartbeatTimer() {
 	for {
 		select {
 		case <-ticker.C:
+			treq := NewTimedRequest(gs.heartbeat, time.Now())
+			treq.AddEvalMethodName("gossipsub.heartbeat")
 			select {
-			case gs.p.eval <- gs.heartbeat:
+			case gs.p.eval <- treq:
 			case <-gs.p.ctx.Done():
 				return
 			}
@@ -1572,9 +1612,11 @@ func (gs *GossipSubRouter) heartbeatTimer() {
 func (gs *GossipSubRouter) heartbeat() {
 	start := time.Now()
 	defer func() {
+		heartBeatDuration := time.Since(start)
+		gs.p.metrics.RecordHeartbeatTime(heartBeatDuration)
 		if gs.params.SlowHeartbeatWarning > 0 {
 			slowWarning := time.Duration(gs.params.SlowHeartbeatWarning * float64(gs.params.HeartbeatInterval))
-			if dt := time.Since(start); dt > slowWarning {
+			if dt := heartBeatDuration; dt > slowWarning {
 				gs.logger.Warn("slow heartbeat", "took", dt)
 			}
 		}
@@ -1614,6 +1656,9 @@ func (gs *GossipSubRouter) heartbeat() {
 
 	// maintain the mesh for topics we have joined
 	for topic, peers := range gs.mesh {
+		// record mesh count here
+		gs.p.metrics.RecordMeshMemberCount(int64(len(peers)), topic)
+
 		prunePeer := func(p peer.ID) {
 			gs.tracer.Prune(p, topic)
 			delete(peers, p)
@@ -1797,6 +1842,9 @@ func (gs *GossipSubRouter) heartbeat() {
 
 	// maintain our fanout for topics we are publishing but we have not joined
 	for topic, peers := range gs.fanout {
+		// record fanout count here
+		gs.p.metrics.RecordFanoutMemberCount(int64(len(peers)), topic)
+
 		// check whether our peers are still in the topic and have a score above the publish threshold
 		for p := range peers {
 			_, ok := gs.p.topics[topic][p]
@@ -1939,7 +1987,7 @@ func (gs *GossipSubRouter) sendGraftPrune(tograft, toprune map[peer.ID][]string,
 		}
 
 		out := rpcWithControl(nil, nil, nil, graft, prune, nil)
-		gs.sendRPC(p, out, false)
+		gs.sendRPC(p, out, false, nil)
 	}
 
 	for p, topics := range toprune {
@@ -1949,7 +1997,7 @@ func (gs *GossipSubRouter) sendGraftPrune(tograft, toprune map[peer.ID][]string,
 		}
 
 		out := rpcWithControl(nil, nil, nil, nil, prune, nil)
-		gs.sendRPC(p, out, false)
+		gs.sendRPC(p, out, false, nil)
 	}
 }
 
@@ -2016,14 +2064,14 @@ func (gs *GossipSubRouter) flush() {
 	for p, ihave := range gs.gossip {
 		delete(gs.gossip, p)
 		out := rpcWithControl(nil, ihave, nil, nil, nil, nil)
-		gs.sendRPC(p, out, false)
+		gs.sendRPC(p, out, false, nil)
 	}
 
 	// send the remaining control messages that wasn't merged with gossip
 	for p, ctl := range gs.control {
 		delete(gs.control, p)
 		out := rpcWithControl(nil, nil, nil, ctl.Graft, ctl.Prune, nil)
-		gs.sendRPC(p, out, false)
+		gs.sendRPC(p, out, false, nil)
 	}
 }
 
@@ -2177,7 +2225,7 @@ func (gs *GossipSubRouter) WithDefaultTagTracer() Option {
 //	nothing.
 func (gs *GossipSubRouter) SendControl(p peer.ID, ctl *pb.ControlMessage, msgs ...*pb.Message) {
 	out := rpcWithControl(msgs, ctl.Ihave, ctl.Iwant, ctl.Graft, ctl.Prune, ctl.Idontwant)
-	gs.sendRPC(p, out, false)
+	gs.sendRPC(p, out, false, nil)
 }
 
 func peerListToMap(peers []peer.ID) map[peer.ID]struct{} {
