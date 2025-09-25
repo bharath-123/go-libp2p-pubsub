@@ -327,6 +327,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 	// and avoid invoking user validators more than once
 	id := v.p.idGen.ID(msg)
 	if !v.p.markSeen(id) {
+		v.p.metrics.IncrementDuplicateMessageCount()
 		v.tracer.DuplicateMessage(msg)
 		return dupeErr{}
 	} else {
@@ -344,6 +345,8 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 
 	// apply inline (synchronous) validators
 	result := ValidationAccept
+
+	inlineValidationStart := time.Now()
 loop:
 	for _, val := range inline {
 		validatorStart := time.Now()
@@ -358,9 +361,12 @@ loop:
 			result = ValidationIgnore
 		}
 	}
+	inlineValidationDuration := time.Since(inlineValidationStart)
+	v.p.metrics.RecordInlineValidationDuration(inlineValidationDuration)
 
 	if result == ValidationReject {
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
+		v.p.metrics.IncrementRejectedMessageCount()
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return ValidationError{Reason: RejectValidationFailed}
 	}
@@ -375,12 +381,14 @@ loop:
 			}()
 		default:
 			v.p.logger.Debug("message validation throttled; dropping message from peer", "peer", src)
+			v.p.metrics.IncrementRejectedMessageCount()
 			v.tracer.RejectMessage(msg, RejectValidationThrottled)
 		}
 		return nil
 	}
 
 	if result == ValidationIgnore {
+		v.p.metrics.IncrementRejectedMessageCount()
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
@@ -411,14 +419,17 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 		_ = onValid(msg)
 	case ValidationReject:
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
+		v.p.metrics.IncrementRejectedMessageCount()
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return
 	case ValidationIgnore:
 		v.p.logger.Debug("message validation punted; ignoring message from peer", "peer", src)
+		v.p.metrics.IncrementIgnoredMessageCount()
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return
 	case validationThrottled:
 		v.p.logger.Debug("message validation throttled; ignoring message from peer", "peer", src)
+		v.p.metrics.IncrementRejectedMessageCount()
 		v.tracer.RejectMessage(msg, RejectValidationThrottled)
 
 	default:
@@ -505,7 +516,7 @@ func (val *validatorImpl) validateMsg(ctx context.Context, src peer.ID, msg *Mes
 	validationStartTime := time.Now()
 	r := val.validate(ctx, src, msg)
 	took := time.Since(validationStartTime)
-	msg.ValidationDuration += took
+	msg.ValidationDuration = took
 	switch r {
 	case ValidationAccept:
 		fallthrough

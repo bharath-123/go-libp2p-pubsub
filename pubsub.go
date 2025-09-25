@@ -1569,6 +1569,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// reject messages from blacklisted peers
 	if p.blacklist.Contains(src) {
 		p.logger.Debug("dropping message from blacklisted peer", "peer", src)
+		p.metrics.IncrementRejectedMessageCount()
 		p.tracer.RejectMessage(msg, RejectBlacklstedPeer)
 		return false
 	}
@@ -1576,6 +1577,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// even if they are forwarded by good peers
 	if p.blacklist.Contains(msg.GetFrom()) {
 		p.logger.Debug("dropping message from blacklisted source", "source", src)
+		p.metrics.IncrementRejectedMessageCount()
 		p.tracer.RejectMessage(msg, RejectBlacklistedSource)
 		return false
 	}
@@ -1590,6 +1592,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	self := p.host.ID()
 	if peer.ID(msg.GetFrom()) == self && src != self {
 		p.logger.Debug("dropping message claiming to be from self but forwarded from peer", "peer", src)
+		p.metrics.IncrementRejectedMessageCount()
 		p.tracer.RejectMessage(msg, RejectSelfOrigin)
 		return false
 	}
@@ -1597,6 +1600,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// have we already seen and validated this message?
 	id := p.idGen.ID(msg)
 	if p.seenMessage(id) {
+		p.metrics.IncrementDuplicateMessageCount()
 		p.tracer.DuplicateMessage(msg)
 		return false
 	}

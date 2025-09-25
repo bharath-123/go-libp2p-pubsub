@@ -84,11 +84,11 @@ type metrics struct {
 	outGoingNormalRpcQueueSize metric.Int64Histogram
 
 	// TODO - validation related metrics
-	duplicateMessages  metric.Int64Counter
-	rejectedMessages   metric.Int64Counter
-	invalidMessages    metric.Int64Counter
-	ignoredMessages    metric.Int64Counter
-	validationDuration metric.Int64Histogram
+	duplicateMessages        metric.Int64Counter
+	rejectedMessages         metric.Int64Counter
+	invalidMessages          metric.Int64Counter
+	ignoredMessages          metric.Int64Counter
+	inlineValidationDuration metric.Int64Histogram
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
@@ -377,6 +377,43 @@ func InitMetrics(ps *PubSub) error {
 		return err
 	}
 
+	if ps.metrics.duplicateMessages, err = meter.Int64Counter(
+		"duplicate_messages",
+		metric.WithDescription("The number of duplicate messages"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.invalidMessages, err = meter.Int64Counter(
+		"invalid_messages",
+		metric.WithDescription("The number of invalid messages"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.ignoredMessages, err = meter.Int64Counter(
+		"ignored_messages",
+		metric.WithDescription("The number of ignored messages"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.rejectedMessages, err = meter.Int64Counter(
+		"rejected_messages",
+		metric.WithDescription("The number of rejected messages"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.inlineValidationDuration, err = meter.Int64Histogram(
+		"inline_validation_duration",
+		metric.WithDescription("The duration for inline validation"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -509,4 +546,24 @@ func (m *metrics) RecordMeshMemberCount(count int64, topic string) {
 
 func (m *metrics) RecordFanoutMemberCount(count int64, topic string) {
 	m.fanoutMemberCount.Record(context.Background(), count, metric.WithAttributes(attribute.String("topic", topic)))
+}
+
+func (m *metrics) IncrementDuplicateMessageCount() {
+	m.duplicateMessages.Add(context.Background(), 1)
+}
+
+func (m *metrics) IncrementInvalidMessageCount() {
+	m.invalidMessages.Add(context.Background(), 1)
+}
+
+func (m *metrics) IncrementIgnoredMessageCount() {
+	m.ignoredMessages.Add(context.Background(), 1)
+}
+
+func (m *metrics) IncrementRejectedMessageCount() {
+	m.rejectedMessages.Add(context.Background(), 1)
+}
+
+func (m *metrics) RecordInlineValidationDuration(duration time.Duration) {
+	m.inlineValidationDuration.Record(context.Background(), duration.Microseconds())
 }
