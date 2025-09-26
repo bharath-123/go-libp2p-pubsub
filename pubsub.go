@@ -16,6 +16,8 @@ import (
 	"github.com/libp2p/go-libp2p-pubsub/internal/gologshim"
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p-pubsub/timecache"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -819,8 +821,8 @@ func (p *PubSub) processLoop(ctx context.Context) {
 	}()
 
 	for {
-		p.metrics.RecordSendMsgQueueDepth(int64(len(p.sendMsg)))
-		p.metrics.RecordIncomingQueueDepth(int64(len(p.incoming)))
+		p.metrics.sendMsgQueueDepth.Record(context.Background(), int64(len(p.sendMsg)))
+		p.metrics.incomingQueueDepth.Record(context.Background(), int64(len(p.incoming)))
 
 		select {
 		case treq := <-p.newPeers:
@@ -1018,7 +1020,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.publishMessage(msg)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "publish_message", "")
 
-			p.metrics.IncrementTopicMsgPublished(msg.GetTopic(), 1)
+			p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
 
 		case treq := <-p.sendMessageBatch:
 			queueDelay := time.Since(treq.ReceivedAt)
@@ -1031,8 +1033,9 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.publishMessageBatch(batchAndOpts)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "send_message_batch", "")
 
-			p.metrics.IncrementTopicMsgPublished(batchAndOpts.messages[0].GetTopic(), int64(len(batchAndOpts.messages)))
-			
+			for _, msg := range batchAndOpts.messages {
+				p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+			}
 
 		case treq := <-p.addVal:
 			queueDelay := time.Since(treq.ReceivedAt)
@@ -1193,7 +1196,8 @@ func (p *PubSub) handleAddTopic(req *addTopicReq) {
 	}
 
 	p.myTopics[topicID] = topic
-	p.metrics.RecordTopicCount(int64(len(p.myTopics)))
+	p.metrics.totalTopicCount.Record(context.Background(), int64(len(p.myTopics)))
+
 	req.resp <- topic
 }
 
@@ -1211,7 +1215,7 @@ func (p *PubSub) handleRemoveTopic(req *rmTopicReq) {
 		len(p.mySubs[req.topic.topic]) == 0 &&
 		p.myRelays[req.topic.topic] == 0 {
 		delete(p.myTopics, topic.topic)
-		p.metrics.RecordTopicCount(int64(len(p.myTopics)))
+		p.metrics.totalTopicCount.Record(context.Background(), int64(len(p.myTopics)))
 		req.resp <- nil
 		return
 	}
@@ -1244,7 +1248,8 @@ func (p *PubSub) handleRemoveSubscription(sub *Subscription) {
 			p.rt.Leave(sub.topic)
 		}
 
-		p.metrics.RecordSubscriptionCount(int64(len(p.mySubs[sub.topic])))
+		p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributes(attribute.String("topic", sub.topic)))
+
 	}
 }
 
@@ -1272,7 +1277,7 @@ func (p *PubSub) handleAddSubscription(req *addSubReq) {
 
 	p.mySubs[sub.topic][sub] = struct{}{}
 
-	p.metrics.RecordSubscriptionCount(int64(len(p.mySubs[sub.topic])))
+	p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributes(attribute.String("topic", sub.topic)))
 
 	req.resp <- sub
 }
@@ -1524,8 +1529,7 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 	case AcceptAll:
 		var toPush []*Message
 		for _, pmsg := range rpc.GetPublish() {
-			// TODO - is this the right place? messages from graylisted and throttled peers may not be counted.
-			p.metrics.IncrementTopicMsgRecvdUnfiltered(pmsg.GetTopic())
+			p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", pmsg.GetTopic())))
 			if !(p.subscribedToMsg(pmsg) || p.canRelayMsg(pmsg)) {
 				p.logger.Debug("received message in topic we didn't subscribe to; ignoring message")
 				continue
@@ -1538,8 +1542,8 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 				ReceivedAt:   rpc.receivedAt,
 			}
 			if p.shouldPush(msg) {
-				p.metrics.IncrementTopicMsgRecvd(msg.GetTopic())
-				p.metrics.IncrementTopicBytesRecvd(int64(msg.Size()), msg.GetTopic())
+				p.metrics.topicMsgRecvd.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+				p.metrics.topicBytesRecvd.Add(context.Background(), int64(msg.Size()), metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
 				toPush = append(toPush, msg)
 			}
 		}
@@ -1569,7 +1573,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// reject messages from blacklisted peers
 	if p.blacklist.Contains(src) {
 		p.logger.Debug("dropping message from blacklisted peer", "peer", src)
-		p.metrics.IncrementRejectedMessageCount()
+		p.metrics.rejectedMessages.Add(context.Background(), 1)
 		p.tracer.RejectMessage(msg, RejectBlacklstedPeer)
 		return false
 	}
@@ -1577,7 +1581,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// even if they are forwarded by good peers
 	if p.blacklist.Contains(msg.GetFrom()) {
 		p.logger.Debug("dropping message from blacklisted source", "source", src)
-		p.metrics.IncrementRejectedMessageCount()
+		p.metrics.rejectedMessages.Add(context.Background(), 1)
 		p.tracer.RejectMessage(msg, RejectBlacklistedSource)
 		return false
 	}
@@ -1592,7 +1596,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	self := p.host.ID()
 	if peer.ID(msg.GetFrom()) == self && src != self {
 		p.logger.Debug("dropping message claiming to be from self but forwarded from peer", "peer", src)
-		p.metrics.IncrementRejectedMessageCount()
+		p.metrics.rejectedMessages.Add(context.Background(), 1)
 		p.tracer.RejectMessage(msg, RejectSelfOrigin)
 		return false
 	}
@@ -1600,7 +1604,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// have we already seen and validated this message?
 	id := p.idGen.ID(msg)
 	if p.seenMessage(id) {
-		p.metrics.IncrementDuplicateMessageCount()
+		p.metrics.duplicateMessages.Add(context.Background(), 1)
 		p.tracer.DuplicateMessage(msg)
 		return false
 	}
@@ -1627,6 +1631,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 	if p.signPolicy.mustVerify() {
 		if p.signPolicy.mustSign() {
 			if msg.Signature == nil {
+				p.metrics.rejectedMessages.Add(context.Background(), 1)
 				p.tracer.RejectMessage(msg, RejectMissingSignature)
 				return ValidationError{Reason: RejectMissingSignature}
 			}
@@ -1635,6 +1640,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 			// to avoid unnecessary signature verification processing-cost.
 		} else {
 			if msg.Signature != nil {
+				p.metrics.rejectedMessages.Add(context.Background(), 1)
 				p.tracer.RejectMessage(msg, RejectUnexpectedSignature)
 				return ValidationError{Reason: RejectUnexpectedSignature}
 			}
@@ -1644,6 +1650,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 			// but is not used if we are not authoring messages ourselves.
 			if p.signID == "" {
 				if msg.Seqno != nil || msg.From != nil || msg.Key != nil {
+					p.metrics.rejectedMessages.Add(context.Background(), 1)
 					p.tracer.RejectMessage(msg, RejectUnexpectedAuthInfo)
 					return ValidationError{Reason: RejectUnexpectedAuthInfo}
 				}
