@@ -1536,6 +1536,7 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool, msgIDs []st
 	}
 
 	// Potentially split the RPC into multiple RPCs that are below the max message size
+	hasRpcBeenSplit := false
 	for rpc := range out.split(gs.p.maxMessageSize) {
 		if rpc.Size() > gs.p.maxMessageSize {
 			// This should only happen if a single message/control is above the maxMessageSize.
@@ -1543,12 +1544,18 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool, msgIDs []st
 			continue
 		}
 		gs.doSendRPC(&rpc, p, q, urgent, msgIDs)
+		hasRpcBeenSplit = true
+	}
+
+	if hasRpcBeenSplit {
+		gs.p.metrics.rpcSplitCount.Add(context.Background(), 1)
 	}
 }
 
 func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 	gs.logger.Debug("dropping message to peer", "peer", p, "reason", reason)
 	gs.tracer.DropRPC(rpc, p)
+	gs.p.metrics.rpcsDropped.Add(context.Background(), 1)
 	// push control messages that need to be retried
 	ctl := rpc.GetControl()
 	if ctl != nil {
