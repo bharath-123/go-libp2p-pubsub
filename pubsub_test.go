@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"fmt"
 	// "fmt"
 	"testing"
 	"time"
@@ -156,81 +157,81 @@ func BenchmarkHandleIncomingRPC(b *testing.B) {
 		}
 	})
 
-	// b.Run("LargeMessageRPC", func(b *testing.B) {
-	// 	// Subscribe to topic first
-	// 	_, err := ps1.Subscribe("large-topic")
-	// 	if err != nil {
-	// 		b.Fatal(err)
-	// 	}
+	b.Run("LargeMessageRPC", func(b *testing.B) {
+		// Subscribe to topic first
+		_, err := ps1.Subscribe("large-topic")
+		if err != nil {
+			b.Fatal(err)
+		}
 
-	// 	// Create RPC with large message (1MB)
-	// 	largeData := make([]byte, 1024*1024)
-	// 	for i := range largeData {
-	// 		largeData[i] = byte(i % 256)
-	// 	}
+		// Create RPC with large message (1MB)
+		largeData := make([]byte, 1024*1024)
+		for i := range largeData {
+			largeData[i] = byte(i % 256)
+		}
 
-	// 	rpc := &RPC{
-	// 		RPC: pb.RPC{
-	// 			Publish: []*pb.Message{
-	// 				{
-	// 					From:  []byte(testPeer),
-	// 					Data:  largeData,
-	// 					Topic: stringPtr("large-topic"),
-	// 					Seqno: []byte{0, 0, 0, 1},
-	// 				},
-	// 			},
-	// 		},
-	// 		from:       testPeer,
-	// 		receivedAt: time.Now(),
-	// 	}
+		rpc := &RPC{
+			RPC: pb.RPC{
+				Publish: []*pb.Message{
+					{
+						From:  []byte(testPeer),
+						Data:  largeData,
+						Topic: stringPtr("large-topic"),
+						Seqno: []byte{0, 0, 0, 1},
+					},
+				},
+			},
+			from:       testPeer,
+			receivedAt: time.Now(),
+		}
 
-	// 	b.ResetTimer()
-	// 	b.ReportAllocs()
+		b.ResetTimer()
+		b.ReportAllocs()
 
-	// 	for i := 0; i < b.N; i++ {
-	// 		// Update sequence number to avoid deduplication
-	// 		rpc.RPC.Publish[0].Seqno = []byte{byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i)}
-	// 		ps1.handleIncomingRPC(rpc)
-	// 	}
-	// })
+		for i := 0; i < b.N; i++ {
+			// Update sequence number to avoid deduplication
+			rpc.RPC.Publish[0].Seqno = []byte{byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i)}
+			ps1.handleIncomingRPC(rpc)
+		}
+	})
 
-	// b.Run("MultipleMessagesRPC", func(b *testing.B) {
-	// 	// Subscribe to topic first
-	// 	_, err := ps1.Subscribe("multi-topic")
-	// 	if err != nil {
-	// 		b.Fatal(err)
-	// 	}
+	b.Run("MultipleMessagesRPC", func(b *testing.B) {
+		// Subscribe to topic first
+		_, err := ps1.Subscribe("multi-topic")
+		if err != nil {
+			b.Fatal(err)
+		}
 
-	// 	// Create RPC with multiple messages
-	// 	messages := make([]*pb.Message, 10)
-	// 	for i := 0; i < 10; i++ {
-	// 		messages[i] = &pb.Message{
-	// 			From:  []byte(testPeer),
-	// 			Data:  []byte(fmt.Sprintf("message %d", i)),
-	// 			Topic: stringPtr("multi-topic"),
-	// 			Seqno: []byte{0, 0, byte(i >> 8), byte(i)},
-	// 		}
-	// 	}
+		// Create RPC with multiple messages
+		messages := make([]*pb.Message, 10)
+		for i := 0; i < 10; i++ {
+			messages[i] = &pb.Message{
+				From:  []byte(testPeer),
+				Data:  []byte(fmt.Sprintf("message %d", i)),
+				Topic: stringPtr("multi-topic"),
+				Seqno: []byte{0, 0, byte(i >> 8), byte(i)},
+			}
+		}
 
-	// 	rpc := &RPC{
-	// 		RPC: pb.RPC{
-	// 			Publish: messages,
-	// 		},
-	// 		from:       testPeer,
-	// 		receivedAt: time.Now(),
-	// 	}
+		rpc := &RPC{
+			RPC: pb.RPC{
+				Publish: messages,
+			},
+			from:       testPeer,
+			receivedAt: time.Now(),
+		}
 
-	// 	b.ResetTimer()
-	// 	b.ReportAllocs()
+		b.ResetTimer()
+		b.ReportAllocs()
 
-	// 	for i := 0; i < b.N; i++ {
-	// 		// Update sequence numbers to avoid deduplication
-	// 		for j, msg := range rpc.RPC.Publish {
-	// 			msg.Seqno = []byte{byte(i >> 8), byte(i), byte(j >> 8), byte(j)}
-	// 		}
-	// 		ps1.handleIncomingRPC(rpc)
-	// 	}
-	// })
+		for i := 0; i < b.N; i++ {
+			// Update sequence numbers to avoid deduplication
+			for j, msg := range rpc.RPC.Publish {
+				msg.Seqno = []byte{byte(i >> 8), byte(i), byte(j >> 8), byte(j)}
+			}
+			ps1.handleIncomingRPC(rpc)
+		}
+	})
 }
 
 // Helper functions for benchmark
