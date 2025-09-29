@@ -18,6 +18,8 @@ type metrics struct {
 	heartbeatTime metric.Int64Histogram
 	// The time spent waiting by an RPC to be sent to the incoming channel in handleNewStream
 	rpcIncomingChannelContentionTime metric.Int64Histogram
+	// The time spent in `sendMsgBlocking` to send a message for publishing to the sendMsg channel
+	sendMsgChannelContentionTime metric.Int64Histogram
 
 	// total number of topics subscribed to
 	totalTopicCount metric.Int64Gauge
@@ -123,6 +125,15 @@ func InitMetrics(ps *PubSub) error {
 	if ps.metrics.rpcIncomingChannelContentionTime, err = meter.Int64Histogram(
 		metricPrefix+"rpc_incoming_channel_contention_time",
 		metric.WithDescription("The time spent waiting by an RPC to be sent to the incoming channel in handleNewStream"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.sendMsgChannelContentionTime, err = meter.Int64Histogram(
+		metricPrefix+"send_msg_channel_contention_time",
+		metric.WithDescription("The time spent waiting by a message to be sent to the sendMsg channel in SendMsgBlocking"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
 	); err != nil {

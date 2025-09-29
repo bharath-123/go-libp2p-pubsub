@@ -301,9 +301,11 @@ func (v *validation) validateWorker() {
 }
 
 func (v *validation) sendMsgBlocking(msg *Message) error {
-	treq := NewTimedRequest(msg, time.Now())
+	start := time.Now()
+	treq := NewTimedRequest(msg, start)
 	select {
 	case v.p.sendMsg <- treq:
+		v.p.metrics.sendMsgChannelContentionTime.Record(context.Background(), time.Since(start).Microseconds())
 		return nil
 	case <-v.p.ctx.Done():
 		return v.p.ctx.Err()
