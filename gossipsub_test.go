@@ -4394,3 +4394,312 @@ func TestTestExtension(t *testing.T) {
 		t.Fatal("TestExtension not received")
 	}
 }
+
+// BenchmarkHeartbeat benchmarks the performance of the GossipSub heartbeat function
+// under different network conditions (peer count, topic count, mesh size)
+func BenchmarkHeartbeat(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	b.Run("SmallNetwork-10peers-5topics", func(b *testing.B) {
+		benchmarkHeartbeat(b, ctx, 10, 5, 6) // D=6, Dlo=4, Dhi=12
+	})
+
+	b.Run("MediumNetwork-50peers-10topics", func(b *testing.B) {
+		benchmarkHeartbeat(b, ctx, 50, 10, 8) // D=8, Dlo=6, Dhi=14
+	})
+
+	b.Run("LargeNetwork-100peers-20topics", func(b *testing.B) {
+		benchmarkHeartbeat(b, ctx, 100, 20, 10) // D=10, Dlo=8, Dhi=16
+	})
+
+	b.Run("VeryLargeNetwork-200peers-50topics", func(b *testing.B) {
+		benchmarkHeartbeat(b, ctx, 200, 50, 12) // D=12, Dlo=10, Dhi=18
+	})
+
+	b.Run("HighMeshDensity-50peers-5topics", func(b *testing.B) {
+		benchmarkHeartbeat(b, ctx, 50, 5, 20) // D=20, Dlo=18, Dhi=26
+	})
+
+	b.Run("OpportunisticGrafting-100peers-10topics", func(b *testing.B) {
+		benchmarkHeartbeatWithOpportunisticGrafting(b, ctx, 100, 10, 8) // D=8, Dlo=6, Dhi=14
+	})
+}
+
+func benchmarkHeartbeat(b *testing.B, ctx context.Context, numPeers, numTopics, meshDegree int) {
+	// Create hosts using existing helper
+	hosts := getDefaultHosts(&testing.T{}, numPeers)
+
+	// Create GossipSub instances with custom parameters for benchmarking
+	psubs := make([]*PubSub, numPeers)
+	for i, h := range hosts {
+		params := DefaultGossipSubParams()
+		params.D = meshDegree
+		params.Dlo = meshDegree - 2
+		params.Dhi = meshDegree + 6
+		params.OpportunisticGraftTicks = 999999 // Disable opportunistic grafting
+		params.HeartbeatInterval = time.Hour    // Disable automatic heartbeat
+
+		ps, err := NewGossipSub(ctx, h, WithGossipSubParams(params))
+		if err != nil {
+			b.Fatal(err)
+		}
+		psubs[i] = ps
+	}
+
+	// Connect all peers to each other (full mesh connectivity)
+	connectAll(&testing.T{}, hosts)
+
+	// Wait for connections to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Create topics and subscriptions
+	topics := make([]string, numTopics)
+	for i := 0; i < numTopics; i++ {
+		topics[i] = fmt.Sprintf("bench-topic-%d", i)
+	}
+
+	// Subscribe peers to topics (each peer subscribes to all topics)
+	for i, ps := range psubs {
+		for _, topic := range topics {
+			_, err := ps.Subscribe(topic)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		// Subscribe only first few peers to create realistic mesh distribution
+		if i >= meshDegree*2 {
+			break
+		}
+	}
+
+	// Wait for initial mesh formation
+	time.Sleep(200 * time.Millisecond)
+
+	// Populate message cache with some messages for gossip
+	for _, ps := range psubs[:5] { // Only first 5 peers publish
+		for _, topic := range topics[:3] { // Only to first 3 topics
+			ps.Publish(topic, []byte(fmt.Sprintf("benchmark message for %s", topic)))
+		}
+	}
+
+	// Wait for messages to propagate
+	time.Sleep(100 * time.Millisecond)
+
+	// Get the GossipSubRouter from the first peer for benchmarking
+	router := psubs[0].rt.(*GossipSubRouter)
+
+	// Benchmark the heartbeat function
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		// Run heartbeat in the PubSub event loop to avoid race conditions
+		done := make(chan struct{})
+		psubs[0].eval <- NewTimedRequest(func() {
+			router.heartbeat()
+			close(done)
+		}, time.Now())
+		<-done
+	}
+}
+
+func benchmarkHeartbeatWithOpportunisticGrafting(b *testing.B, ctx context.Context, numPeers, numTopics, meshDegree int) {
+	// Create hosts using existing helper
+	hosts := getDefaultHosts(&testing.T{}, numPeers)
+
+	// Create GossipSub instances with opportunistic grafting enabled
+	psubs := make([]*PubSub, numPeers)
+	for i, h := range hosts {
+		params := DefaultGossipSubParams()
+		params.D = meshDegree
+		params.Dlo = meshDegree - 2
+		params.Dhi = meshDegree + 6
+		params.OpportunisticGraftTicks = 1 // Enable opportunistic grafting every heartbeat
+		params.OpportunisticGraftPeers = 2
+		params.HeartbeatInterval = time.Hour // Disable automatic heartbeat
+
+		ps, err := NewGossipSub(ctx, h,
+			WithGossipSubParams(params),
+			// Set up peer scoring to create score differences
+			WithPeerScore(&PeerScoreParams{
+				Topics:        map[string]*TopicScoreParams{},
+				DecayInterval: time.Second,
+				DecayToZero:   0.01,
+			}, &PeerScoreThresholds{
+				OpportunisticGraftThreshold: 0.1,
+			}),
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+		psubs[i] = ps
+	}
+
+	// Connect all peers
+	connectAll(&testing.T{}, hosts)
+	time.Sleep(100 * time.Millisecond)
+
+	// Create topics and subscriptions
+	topics := make([]string, numTopics)
+	for i := 0; i < numTopics; i++ {
+		topics[i] = fmt.Sprintf("bench-topic-%d", i)
+	}
+
+	for i, ps := range psubs {
+		for _, topic := range topics {
+			_, err := ps.Subscribe(topic)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		if i >= meshDegree*2 {
+			break
+		}
+	}
+
+	// Wait for initial mesh formation
+	time.Sleep(200 * time.Millisecond)
+
+	// Create score differences by having some peers publish more
+	for i, ps := range psubs {
+		messageCount := 1
+		if i < numPeers/4 { // First quarter publishes more (better scores)
+			messageCount = 5
+		}
+
+		for j := 0; j < messageCount; j++ {
+			for _, topic := range topics[:3] {
+				ps.Publish(topic, []byte(fmt.Sprintf("score message %d from peer %d", j, i)))
+			}
+		}
+	}
+
+	// Wait for score differences to develop
+	time.Sleep(300 * time.Millisecond)
+
+	// Get router for benchmarking
+	router := psubs[0].rt.(*GossipSubRouter)
+
+	// Set heartbeat tick to trigger opportunistic grafting
+	router.heartbeatTicks = 0 // Will trigger on first heartbeat
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		done := make(chan struct{})
+		psubs[0].eval <- NewTimedRequest(func() {
+			router.heartbeat()
+			close(done)
+		}, time.Now())
+		<-done
+
+		// Increment tick counter for next iteration
+		router.heartbeatTicks++
+	}
+}
+
+// BenchmarkHeartbeatComponents benchmarks individual components of the heartbeat
+func BenchmarkHeartbeatComponents(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Setup a medium-sized network
+	const numPeers = 100
+	const numTopics = 10
+	hosts := getDefaultHosts(&testing.T{}, numPeers)
+
+	psubs := make([]*PubSub, numPeers)
+	for i, h := range hosts {
+		params := DefaultGossipSubParams()
+		params.HeartbeatInterval = time.Hour // Disable automatic heartbeat
+
+		ps, err := NewGossipSub(ctx, h, WithGossipSubParams(params))
+		if err != nil {
+			b.Fatal(err)
+		}
+		psubs[i] = ps
+	}
+
+	connectAll(&testing.T{}, hosts)
+	time.Sleep(100 * time.Millisecond)
+
+	// Setup topics and subscriptions
+	for i, ps := range psubs[:50] { // Half the peers subscribe
+		for j := 0; j < numTopics; j++ {
+			topic := fmt.Sprintf("topic-%d", j)
+			_, err := ps.Subscribe(topic)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+		_ = i // Use the variable to avoid lint error
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	router := psubs[0].rt.(*GossipSubRouter)
+
+	b.Run("ScoreCaching", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			// Simulate score caching operation
+			scores := make(map[peer.ID]float64)
+			for _, h := range hosts {
+				scores[h.ID()] = router.score.Score(h.ID())
+			}
+		}
+	})
+
+	b.Run("MeshMaintenance", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			done := make(chan struct{})
+			psubs[0].eval <- NewTimedRequest(func() {
+				// Simulate just the mesh maintenance part
+				for topic, peers := range router.mesh {
+					_ = topic
+					_ = len(peers)
+
+					// Simulate peer scoring and sorting
+					if len(peers) > router.params.Dhi {
+						plst := make([]peer.ID, 0, len(peers))
+						for p := range peers {
+							plst = append(plst, p)
+						}
+						sort.Slice(plst, func(i, j int) bool {
+							return router.score.Score(plst[i]) > router.score.Score(plst[j])
+						})
+					}
+				}
+				close(done)
+			}, time.Now())
+			<-done
+		}
+	})
+
+	b.Run("GossipEmission", func(b *testing.B) {
+		// Add some messages to cache first
+		for i := 0; i < 10; i++ {
+			for j := 0; j < 5; j++ {
+				topic := fmt.Sprintf("topic-%d", j)
+				psubs[i].Publish(topic, []byte(fmt.Sprintf("gossip message %d", i)))
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			done := make(chan struct{})
+			psubs[0].eval <- NewTimedRequest(func() {
+				// Simulate gossip emission for all topics
+				for topic, peers := range router.mesh {
+					router.emitGossip(topic, peers)
+				}
+				close(done)
+			}, time.Now())
+			<-done
+		}
+	})
+}
