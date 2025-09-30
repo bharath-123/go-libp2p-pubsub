@@ -1020,7 +1020,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.publishMessage(msg)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "publish_message", "")
 
-			p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+			// p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
 
 		case treq := <-p.sendMessageBatch:
 			queueDelay := time.Since(treq.ReceivedAt)
@@ -1033,9 +1033,9 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.publishMessageBatch(batchAndOpts)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "send_message_batch", "")
 
-			for _, msg := range batchAndOpts.messages {
-				p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
-			}
+			// for _, msg := range batchAndOpts.messages {
+			// 	p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+			// }
 
 		case treq := <-p.addVal:
 			queueDelay := time.Since(treq.ReceivedAt)
@@ -1529,7 +1529,7 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 	case AcceptAll:
 		var toPush []*Message
 		for _, pmsg := range rpc.GetPublish() {
-			p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", pmsg.GetTopic())))
+			// p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", pmsg.GetTopic())))
 			if !(p.subscribedToMsg(pmsg) || p.canRelayMsg(pmsg)) {
 				p.logger.Debug("received message in topic we didn't subscribe to; ignoring message")
 				continue
@@ -1542,8 +1542,8 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 				ReceivedAt:   rpc.receivedAt,
 			}
 			if p.shouldPush(msg) {
-				p.metrics.topicMsgRecvd.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
-				p.metrics.topicBytesRecvd.Add(context.Background(), int64(msg.Size()), metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+				// p.metrics.topicMsgRecvd.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+				// p.metrics.topicBytesRecvd.Add(context.Background(), int64(msg.Size()), metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
 				toPush = append(toPush, msg)
 			}
 		}
