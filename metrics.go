@@ -82,12 +82,15 @@ type metrics struct {
 	outGoingNormalRpcQueueSize metric.Int64Histogram
 	rpcsDropped                metric.Int64Counter
 	// number of times a rpc had to be split
-	rpcSplitCount              metric.Int64Counter
+	rpcSplitCount metric.Int64Counter
 
 	duplicateMessages        metric.Int64Counter
 	rejectedMessages         metric.Int64Counter
 	ignoredMessages          metric.Int64Counter
 	inlineValidationDuration metric.Int64Histogram
+
+	asyncValidationDuration  metric.Int64Histogram
+	asyncValidationThrottled metric.Int64Counter
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
@@ -385,6 +388,22 @@ func InitMetrics(ps *PubSub) error {
 		metric.WithDescription("The duration for inline validation"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.asyncValidationDuration, err = meter.Int64Histogram(
+		metricPrefix+"async_validation_duration",
+		metric.WithDescription("The duration for async validation"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.asyncValidationThrottled, err = meter.Int64Counter(
+		metricPrefix+"async_validation_throttled",
+		metric.WithDescription("The number of times async validation was throttled"),
 	); err != nil {
 		return err
 	}

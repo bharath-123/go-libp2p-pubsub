@@ -380,10 +380,13 @@ loop:
 		select {
 		case v.validateThrottle <- struct{}{}:
 			go func() {
+				start := time.Now()
 				v.doValidateTopic(async, src, msg, result, onValid)
+				v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds())
 				<-v.validateThrottle
 			}()
 		default:
+			v.p.metrics.asyncValidationThrottled.Add(context.Background(), 1)
 			v.p.logger.Debug("message validation throttled; dropping message from peer", "peer", src)
 			v.p.metrics.rejectedMessages.Add(context.Background(), 1)
 			v.tracer.RejectMessage(msg, RejectValidationThrottled)
