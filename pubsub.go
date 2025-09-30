@@ -1020,7 +1020,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.publishMessage(msg)
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "publish_message", "")
 
-			p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+			p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 
 		case treq := <-p.sendMessageBatch:
 			queueDelay := time.Since(treq.ReceivedAt)
@@ -1034,7 +1034,7 @@ func (p *PubSub) processLoop(ctx context.Context) {
 			p.metrics.RecordEventProcessingTime(time.Since(startTime), "send_message_batch", "")
 
 			for _, msg := range batchAndOpts.messages {
-				p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+				p.metrics.topicMsgPublished.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			}
 
 		case treq := <-p.addVal:
@@ -1248,7 +1248,7 @@ func (p *PubSub) handleRemoveSubscription(sub *Subscription) {
 			p.rt.Leave(sub.topic)
 		}
 
-		p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributes(attribute.String("topic", sub.topic)))
+		p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", sub.topic))))
 
 	}
 }
@@ -1277,7 +1277,7 @@ func (p *PubSub) handleAddSubscription(req *addSubReq) {
 
 	p.mySubs[sub.topic][sub] = struct{}{}
 
-	p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributes(attribute.String("topic", sub.topic)))
+	p.metrics.totalSubscriptionCount.Record(context.Background(), int64(len(p.mySubs[sub.topic])), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", sub.topic))))
 
 	req.resp <- sub
 }
@@ -1529,7 +1529,9 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 	case AcceptAll:
 		var toPush []*Message
 		for _, pmsg := range rpc.GetPublish() {
-			p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", pmsg.GetTopic()))))
+			p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1, metric.WithAttributeSet(p.metrics.GetAttributeSet(pmsg.GetTopic(), "", "")))
+			// p.metrics.topicMsgRecvdUnfiltered.Add(context.Background(), 1)
+
 			if !(p.subscribedToMsg(pmsg) || p.canRelayMsg(pmsg)) {
 				p.logger.Debug("received message in topic we didn't subscribe to; ignoring message")
 				continue
@@ -1542,8 +1544,8 @@ func (p *PubSub) handleIncomingRPC(rpc *RPC) {
 				ReceivedAt:   rpc.receivedAt,
 			}
 			if p.shouldPush(msg) {
-				p.metrics.topicMsgRecvd.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
-				p.metrics.topicBytesRecvd.Add(context.Background(), int64(msg.Size()), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
+				p.metrics.topicMsgRecvd.Add(context.Background(), 1, metric.WithAttributeSet(p.metrics.GetAttributeSet(msg.GetTopic(), "", "")))
+				p.metrics.topicBytesRecvd.Add(context.Background(), int64(msg.Size()), metric.WithAttributeSet(p.metrics.GetAttributeSet(msg.GetTopic(), "", "")))
 				toPush = append(toPush, msg)
 			}
 		}

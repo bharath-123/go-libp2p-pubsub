@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -82,7 +83,7 @@ type metrics struct {
 	outGoingNormalRpcQueueSize metric.Int64Histogram
 	rpcsDropped                metric.Int64Counter
 	// number of times a rpc had to be split
-	rpcSplitCount              metric.Int64Counter
+	rpcSplitCount metric.Int64Counter
 
 	duplicateMessages        metric.Int64Counter
 	rejectedMessages         metric.Int64Counter
@@ -91,6 +92,17 @@ type metrics struct {
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
+
+	// topicAttributeCache sync.Map // map[string]attribute.Set
+	// evalMethodAttributeCache sync.Map // map[string]attribute.Set
+	// eventTypeAttributeCache sync.Map // map[string]attribute.Set
+	attributeCache sync.Map
+}
+
+type combinedAttrKey struct {
+	topic      string
+	eventType  string
+	methodName string
 }
 
 func WithMeterProvider(meterProvider metric.MeterProvider) Option {
@@ -98,6 +110,34 @@ func WithMeterProvider(meterProvider metric.MeterProvider) Option {
 		ps.metrics.MeterProvider = meterProvider
 		return nil
 	}
+}
+
+func (m *metrics) GetAttributeSet(topic, eventType, methodName string) attribute.Set {
+	key := combinedAttrKey{
+		topic:      topic,
+		eventType:  eventType,
+		methodName: methodName,
+	}
+
+	set, ok := m.attributeCache.Load(topic)
+	if ok {
+		return set.(attribute.Set)
+	}
+
+	attrs := []attribute.KeyValue{}
+	if key.topic != "" {
+		attrs = append(attrs, attribute.String("topic", key.topic))
+	}
+	if key.eventType != "" {
+		attrs = append(attrs, attribute.String("event_type", key.eventType))
+	}
+	if key.methodName != "" {
+		attrs = append(attrs, attribute.String("method_name", key.methodName))
+	}
+
+	set = attribute.NewSet(attrs...)
+	m.attributeCache.Store(topic, set)
+	return set.(attribute.Set)
 }
 
 func InitMetrics(ps *PubSub) error {
@@ -393,28 +433,28 @@ func InitMetrics(ps *PubSub) error {
 }
 
 func (m *metrics) IncrementEventCount(eventType string, evalMethodName string) {
-	attrs := []attribute.KeyValue{}
-	if evalMethodName != "" {
-		attrs = append(attrs, attribute.String("eval_method_name", evalMethodName))
-	}
-	attrs = append(attrs, attribute.String("event_type", eventType))
-	m.eventCount.Add(context.Background(), 1, metric.WithAttributes(attrs...))
+	// evalAttrSet := m.GetEvalMethodAttributeSet(evalMethodName)
+	// eventTypeAttrSet := m.GetEventTypeAttributeSet(eventType)
+
+	// attrs := []attribute.KeyValue{}
+	// if evalMethodName != "" {
+	// 	// attrSet := m.GetAttributeSet(attribute.KeyValue{Key: "eval_method_name", Value: attribute.StringValue(evalMethodName)} )
+	// 	attrs = append(attrs, attribute.String("eval_method_name", evalMethodName))
+	// 	// attrs = append(attrs, attrSet)
+	// }
+	// attrs = append(attrs, attribute.String("event_type", eventType))
+
+	attrSet := m.GetAttributeSet("", eventType, evalMethodName)
+
+	m.eventCount.Add(context.Background(), 1, metric.WithAttributeSet(attrSet))
 }
 
 func (m *metrics) RecordEventLoopWaitTeam(waitTime time.Duration, eventType string, evalMethodName string) {
-	attrs := []attribute.KeyValue{}
-	if evalMethodName != "" {
-		attrs = append(attrs, attribute.String("eval_method_name", evalMethodName))
-	}
-	attrs = append(attrs, attribute.String("event_type", eventType))
-	m.eventLoopWaitTime.Record(context.Background(), waitTime.Microseconds(), metric.WithAttributes(attrs...))
+	attrSet := m.GetAttributeSet("", eventType, evalMethodName)
+	m.eventLoopWaitTime.Record(context.Background(), waitTime.Microseconds(), metric.WithAttributeSet(attrSet))
 }
 
 func (m *metrics) RecordEventProcessingTime(processingTime time.Duration, eventType string, evalMethodName string) {
-	attrs := []attribute.KeyValue{}
-	if evalMethodName != "" {
-		attrs = append(attrs, attribute.String("eval_method_name", evalMethodName))
-	}
-	attrs = append(attrs, attribute.String("event_type", eventType))
-	m.eventProcessingTime.Record(context.Background(), processingTime.Microseconds(), metric.WithAttributes(attrs...))
+	attrSet := m.GetAttributeSet("", eventType, evalMethodName)
+	m.eventProcessingTime.Record(context.Background(), processingTime.Microseconds(), metric.WithAttributeSet(attrSet))
 }

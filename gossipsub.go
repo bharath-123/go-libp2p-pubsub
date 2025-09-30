@@ -13,7 +13,6 @@ import (
 	"time"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/libp2p/go-libp2p/core/event"
@@ -1036,7 +1035,7 @@ func (gs *GossipSubRouter) handleGraft(p peer.ID, ctl *pb.ControlMessage) []*pb.
 	for _, graft := range ctl.GetGraft() {
 		topic := graft.GetTopicID()
 
-		gs.p.metrics.graftMsgRecvdPerTopic.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
+		gs.p.metrics.graftMsgRecvdPerTopic.Add(context.Background(), 1, metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 
 		if !gs.p.peerFilter(p, topic) {
 			continue
@@ -1132,7 +1131,7 @@ func (gs *GossipSubRouter) handlePrune(p peer.ID, ctl *pb.ControlMessage) {
 	for _, prune := range ctl.GetPrune() {
 		topic := prune.GetTopicID()
 
-		gs.p.metrics.pruneMsgRecvdPerTopic.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
+		gs.p.metrics.pruneMsgRecvdPerTopic.Add(context.Background(), 1, metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 
 		peers, ok := gs.mesh[topic]
 		if !ok {
@@ -1489,14 +1488,14 @@ func (gs *GossipSubRouter) Leave(topic string) {
 func (gs *GossipSubRouter) sendGraft(p peer.ID, topic string) {
 	graft := []*pb.ControlGraft{{TopicID: &topic}}
 	out := rpcWithControl(nil, nil, nil, graft, nil, nil)
-	gs.p.metrics.graftMsgSentPerTopic.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
+	gs.p.metrics.graftMsgSentPerTopic.Add(context.Background(), 1, metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 	gs.sendRPC(p, out, false, nil)
 }
 
 func (gs *GossipSubRouter) sendPrune(p peer.ID, topic string, isUnsubscribe bool) {
 	prune := []*pb.ControlPrune{gs.makePrune(p, topic, gs.doPX, isUnsubscribe)}
 	out := rpcWithControl(nil, nil, nil, nil, prune, nil)
-	gs.p.metrics.pruneMsgSentPerTopic.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
+	gs.p.metrics.pruneMsgSentPerTopic.Add(context.Background(), 1, metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 	gs.sendRPC(p, out, false, nil)
 }
 
@@ -1555,7 +1554,7 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool, msgIDs []st
 func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 	gs.logger.Debug("dropping message to peer", "peer", p, "reason", reason)
 	gs.tracer.DropRPC(rpc, p)
-	// gs.p.metrics.rpcsDropped.Add(context.Background(), 1)
+	gs.p.metrics.rpcsDropped.Add(context.Background(), 1)
 	// push control messages that need to be retried
 	ctl := rpc.GetControl()
 	if ctl != nil {
@@ -1581,8 +1580,8 @@ func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bo
 	if len(rpc.GetPublish()) > 0 {
 		for _, msg := range rpc.GetPublish() {
 			if msg.GetTopic() != "" {
-				gs.p.metrics.topicMsgSent.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
-				gs.p.metrics.topicBytesSent.Add(context.Background(), int64(msg.Size()), metric.WithAttributes(attribute.String("topic", msg.GetTopic())))
+				gs.p.metrics.topicMsgSent.Add(context.Background(), 1, metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(msg.GetTopic(), "", "")))
+				gs.p.metrics.topicBytesSent.Add(context.Background(), int64(msg.Size()), metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(msg.GetTopic(), "", "")))
 			}
 		}
 	}
@@ -1667,7 +1666,7 @@ func (gs *GossipSubRouter) heartbeat() {
 	// maintain the mesh for topics we have joined
 	for topic, peers := range gs.mesh {
 		// record mesh count here
-		gs.p.metrics.meshMemberCount.Record(context.Background(), int64(len(peers)), metric.WithAttributes(attribute.String("topic", topic)))
+		gs.p.metrics.meshMemberCount.Record(context.Background(), int64(len(peers)), metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 
 		prunePeer := func(p peer.ID) {
 			gs.tracer.Prune(p, topic)
@@ -1853,7 +1852,7 @@ func (gs *GossipSubRouter) heartbeat() {
 	// maintain our fanout for topics we are publishing but we have not joined
 	for topic, peers := range gs.fanout {
 		// record fanout count here
-		gs.p.metrics.fanoutMemberCount.Record(context.Background(), int64(len(peers)), metric.WithAttributes(attribute.String("topic", topic)))
+		gs.p.metrics.fanoutMemberCount.Record(context.Background(), int64(len(peers)), metric.WithAttributeSet(gs.p.metrics.GetAttributeSet(topic, "", "")))
 
 		// check whether our peers are still in the topic and have a score above the publish threshold
 		for p := range peers {
