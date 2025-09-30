@@ -263,7 +263,7 @@ func (v *validation) Push(src peer.ID, msg *Message) bool {
 		case v.validateQ <- &validateReq{vals, src, msg}:
 		default:
 			v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
-			v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectValidationQueueFull)
 		}
 		return false
@@ -323,7 +323,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 	if msg.Signature != nil {
 		if !v.validateSignature(msg) {
 			v.p.logger.Debug("message signature validation failed; dropping message from peer", "peer", src)
-			v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectInvalidSignature)
 			return ValidationError{Reason: RejectInvalidSignature}
 		}
@@ -372,7 +372,7 @@ loop:
 
 	if result == ValidationReject {
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
-		v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return ValidationError{Reason: RejectValidationFailed}
 	}
@@ -390,14 +390,14 @@ loop:
 		default:
 			v.p.metrics.asyncValidationThrottled.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.p.logger.Debug("message validation throttled; dropping message from peer", "peer", src)
-			v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectValidationThrottled)
 		}
 		return nil
 	}
 
 	if result == ValidationIgnore {
-		v.p.metrics.ignoredMessages.Add(context.Background(), 1)
+		v.p.metrics.ignoredMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
@@ -428,17 +428,17 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 		_ = onValid(msg)
 	case ValidationReject:
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
-		v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return
 	case ValidationIgnore:
 		v.p.logger.Debug("message validation punted; ignoring message from peer", "peer", src)
-		v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return
 	case validationThrottled:
 		v.p.logger.Debug("message validation throttled; ignoring message from peer", "peer", src)
-		v.p.metrics.rejectedMessages.Add(context.Background(), 1)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationThrottled)
 
 	default:

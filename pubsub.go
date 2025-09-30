@@ -1573,7 +1573,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// reject messages from blacklisted peers
 	if p.blacklist.Contains(src) {
 		p.logger.Debug("dropping message from blacklisted peer", "peer", src)
-		p.metrics.rejectedMessages.Add(context.Background(), 1)
+		p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		p.tracer.RejectMessage(msg, RejectBlacklstedPeer)
 		return false
 	}
@@ -1581,7 +1581,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// even if they are forwarded by good peers
 	if p.blacklist.Contains(msg.GetFrom()) {
 		p.logger.Debug("dropping message from blacklisted source", "source", src)
-		p.metrics.rejectedMessages.Add(context.Background(), 1)
+		p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		p.tracer.RejectMessage(msg, RejectBlacklistedSource)
 		return false
 	}
@@ -1596,7 +1596,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	self := p.host.ID()
 	if peer.ID(msg.GetFrom()) == self && src != self {
 		p.logger.Debug("dropping message claiming to be from self but forwarded from peer", "peer", src)
-		p.metrics.rejectedMessages.Add(context.Background(), 1)
+		p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		p.tracer.RejectMessage(msg, RejectSelfOrigin)
 		return false
 	}
@@ -1604,7 +1604,7 @@ func (p *PubSub) shouldPush(msg *Message) bool {
 	// have we already seen and validated this message?
 	id := p.idGen.ID(msg)
 	if p.seenMessage(id) {
-		p.metrics.duplicateMessages.Add(context.Background(), 1)
+		p.metrics.duplicateMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		p.tracer.DuplicateMessage(msg)
 		return false
 	}
@@ -1631,7 +1631,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 	if p.signPolicy.mustVerify() {
 		if p.signPolicy.mustSign() {
 			if msg.Signature == nil {
-				p.metrics.rejectedMessages.Add(context.Background(), 1)
+				p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 				p.tracer.RejectMessage(msg, RejectMissingSignature)
 				return ValidationError{Reason: RejectMissingSignature}
 			}
@@ -1640,7 +1640,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 			// to avoid unnecessary signature verification processing-cost.
 		} else {
 			if msg.Signature != nil {
-				p.metrics.rejectedMessages.Add(context.Background(), 1)
+				p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 				p.tracer.RejectMessage(msg, RejectUnexpectedSignature)
 				return ValidationError{Reason: RejectUnexpectedSignature}
 			}
@@ -1650,7 +1650,7 @@ func (p *PubSub) checkSigningPolicy(msg *Message) error {
 			// but is not used if we are not authoring messages ourselves.
 			if p.signID == "" {
 				if msg.Seqno != nil || msg.From != nil || msg.Key != nil {
-					p.metrics.rejectedMessages.Add(context.Background(), 1)
+					p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 					p.tracer.RejectMessage(msg, RejectUnexpectedAuthInfo)
 					return ValidationError{Reason: RejectUnexpectedAuthInfo}
 				}
