@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	pb "github.com/libp2p/go-libp2p-pubsub/pb"
@@ -306,31 +307,6 @@ func BenchmarkHandleIncomingRPC(b *testing.B) {
 		}
 	})
 
-	b.Run("IDontWantControlRPC", func(b *testing.B) {
-		// Create RPC with IDONTWANT control messages
-		messageIDs := []string{"dontwant1", "dontwant2", "dontwant3"}
-		rpc := &RPC{
-			RPC: pb.RPC{
-				Control: &pb.ControlMessage{
-					Idontwant: []*pb.ControlIDontWant{
-						{
-							MessageIDs: messageIDs,
-						},
-					},
-				},
-			},
-			from:       testPeer,
-			receivedAt: time.Now(),
-		}
-
-		b.ResetTimer()
-		b.ReportAllocs()
-
-		for i := 0; i < b.N; i++ {
-			ps1.handleIncomingRPC(rpc)
-		}
-	})
-
 	b.Run("GraftControlRPC", func(b *testing.B) {
 		// Subscribe to topic first so GRAFT makes sense
 		_, err := ps1.Subscribe("graft-topic")
@@ -556,6 +532,14 @@ func uint64Ptr(u uint64) *uint64 {
 	return &u
 }
 
+// Global variables to prevent compiler optimization in benchmarks
+var (
+	benchSinkString            string
+	benchSinkContext           context.Context
+	benchSinkAttributeSet      attribute.Set
+	benchSinkMeasurementOption metric.MeasurementOption
+)
+
 func BenchmarkIsolateMetricAllocations(b *testing.B) {
 	// Setup
 	ctx, cancel := context.WithCancel(context.Background())
@@ -580,14 +564,21 @@ func BenchmarkIsolateMetricAllocations(b *testing.B) {
 	b.Run("JustGetTopic", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = pmsg.GetTopic()
+			benchSinkString = pmsg.GetTopic() // Prevent optimization
+		}
+	})
+
+	b.Run("JustDirectTopicAccess", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			benchSinkString = *pmsg.Topic // Direct field access - should be faster
 		}
 	})
 
 	b.Run("JustContextBackground", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_ = context.Background()
+			benchSinkContext = context.Background() // Prevent optimization
 		}
 	})
 
@@ -596,7 +587,7 @@ func BenchmarkIsolateMetricAllocations(b *testing.B) {
 		topic := pmsg.GetTopic()
 		attrSet := ps1.metrics.GetAttributeSet(topic, "", "")
 		for i := 0; i < b.N; i++ {
-			_ = metric.WithAttributeSet(attrSet)
+			benchSinkMeasurementOption = metric.WithAttributeSet(attrSet) // Prevent optimization
 		}
 	})
 
@@ -604,7 +595,7 @@ func BenchmarkIsolateMetricAllocations(b *testing.B) {
 		b.ReportAllocs()
 		topic := pmsg.GetTopic()
 		for i := 0; i < b.N; i++ {
-			_ = ps1.metrics.GetAttributeSet(topic, "", "")
+			benchSinkAttributeSet = ps1.metrics.GetAttributeSet(topic, "", "")
 		}
 	})
 
@@ -620,7 +611,7 @@ func BenchmarkIsolateMetricAllocations(b *testing.B) {
 
 	b.Run("OptimizedVersion", func(b *testing.B) {
 		b.ReportAllocs()
-		topic := pmsg.GetTopic()                            // Extract once
+		topic := *pmsg.Topic                                // Extract once
 		attrs := ps1.metrics.GetAttributeSet(topic, "", "") // Cache hit after first call
 		for i := 0; i < b.N; i++ {
 			ps1.metrics.topicMsgRecvdUnfiltered.Add(metricCtx, 1, metric.WithAttributeSet(attrs))
