@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -382,11 +384,11 @@ loop:
 			go func() {
 				start := time.Now()
 				v.doValidateTopic(async, src, msg, result, onValid)
-				v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds())
+				v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 				<-v.validateThrottle
 			}()
 		default:
-			v.p.metrics.asyncValidationThrottled.Add(context.Background(), 1)
+			v.p.metrics.asyncValidationThrottled.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.p.logger.Debug("message validation throttled; dropping message from peer", "peer", src)
 			v.p.metrics.rejectedMessages.Add(context.Background(), 1)
 			v.tracer.RejectMessage(msg, RejectValidationThrottled)
