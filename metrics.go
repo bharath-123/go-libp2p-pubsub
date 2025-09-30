@@ -92,6 +92,8 @@ type metrics struct {
 	asyncValidationDuration  metric.Int64Histogram
 	asyncValidationThrottled metric.Int64Counter
 
+	validationDuration metric.Int64Histogram
+
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
 }
@@ -404,6 +406,15 @@ func InitMetrics(ps *PubSub) error {
 	if ps.metrics.asyncValidationThrottled, err = meter.Int64Counter(
 		metricPrefix+"async_validation_throttled",
 		metric.WithDescription("The number of times async validation was throttled"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.validationDuration, err = meter.Int64Histogram(
+		metricPrefix+"validation_duration",
+		metric.WithDescription("The duration for validation"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000),
 	); err != nil {
 		return err
 	}
