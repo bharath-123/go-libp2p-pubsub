@@ -382,9 +382,7 @@ loop:
 		select {
 		case v.validateThrottle <- struct{}{}:
 			go func() {
-				start := time.Now()
 				v.doValidateTopic(async, src, msg, result, onValid)
-				v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 				<-v.validateThrottle
 			}()
 		default:
@@ -402,6 +400,7 @@ loop:
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
 
+
 	// no async validators, accepted message
 	return onValid(msg)
 }
@@ -417,6 +416,7 @@ func (v *validation) validateSignature(msg *Message) bool {
 }
 
 func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Message, r ValidationResult, onValid func(*Message) error) {
+	start := time.Now()
 	result := v.validateTopic(vals, src, msg)
 
 	if result == ValidationAccept && r != ValidationAccept {
@@ -426,6 +426,7 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 	switch result {
 	case ValidationAccept:
 		_ = onValid(msg)
+		v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 	case ValidationReject:
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
 		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
