@@ -503,7 +503,7 @@ func NewPubSub(ctx context.Context, h host.Host, rt PubSubRouter, opts ...Option
 		addTopic:              make(chan TimedRequest[*addTopicReq]),
 		rmTopic:               make(chan TimedRequest[*rmTopicReq]),
 		getTopics:             make(chan TimedRequest[*topicReq]),
-		sendMsg:               make(chan TimedRequest[*Message], 32),
+		sendMsg:               make(chan TimedRequest[*Message], 64),
 		sendMessageBatch:      make(chan TimedRequest[messageBatchAndPublishOptions], 1),
 		addVal:                make(chan TimedRequest[*addValReq]),
 		rmVal:                 make(chan TimedRequest[*rmValReq]),

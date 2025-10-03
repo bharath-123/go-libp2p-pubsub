@@ -200,7 +200,7 @@ func InitMetrics(ps *PubSub) error {
 	if ps.metrics.sendMsgQueueDepth, err = meter.Int64Histogram(
 		metricPrefix+"sendmsg_queue_depth",
 		metric.WithDescription("The depth of the send message queue in the event loop"),
-		metric.WithExplicitBucketBoundaries(1, 5, 10, 15, 20, 25, 30, 32),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 15, 20, 25, 30, 32, 64),
 	); err != nil {
 		return err
 	}
