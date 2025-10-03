@@ -270,6 +270,9 @@ type RPC struct {
 	// unexported on purpose, not sending this over the wire
 	from       peer.ID
 	receivedAt time.Time
+	// times at which messages are received in the RPC. This will be an empty
+	// list if this RPC contains only control messages
+	messageReceiveTimes []time.Time
 }
 
 // split splits the given RPC If a sub RPC is too large and can't be split

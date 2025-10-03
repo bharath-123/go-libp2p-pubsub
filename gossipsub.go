@@ -1395,6 +1395,10 @@ func (gs *GossipSubRouter) rpcs(msg *Message) iter.Seq2[peer.ID, *RPC] {
 		}
 
 		out := rpcWithMessages(msg.Message)
+		if !msg.ReceivedAt.IsZero() {
+			out.messageReceiveTimes = append(out.messageReceiveTimes, msg.ReceivedAt)
+		}
+
 		for pid := range tosend {
 			if pid == from || pid == peer.ID(msg.GetFrom()) {
 				continue

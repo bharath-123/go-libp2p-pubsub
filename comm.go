@@ -9,6 +9,8 @@ import (
 	"github.com/gogo/protobuf/proto"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/multiformats/go-varint"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -66,7 +68,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		// Peek at the message length to know when we should mark the start time
 		// for measuring how long it took to receive a message.
 		_, _ = r.NextMsgLen()
-		start := time.Now()
+		messageNetworkReceiveTime := time.Now()
 		msgbytes, err := r.ReadMsg()
 		if err != nil {
 			r.ReleaseMsg(msgbytes)
@@ -95,7 +97,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 
-		timeToReceive := time.Since(start)
+		timeToReceive := time.Since(messageNetworkReceiveTime)
 		p.metrics.messageReceivedTime.Record(context.Background(), timeToReceive.Microseconds())
 
 		p.metrics.messageSize.Record(context.Background(), int64(rpc.Size()))
@@ -103,12 +105,13 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		p.rpcLogger.Debug("received", "peer", s.Conn().RemotePeer(), "duration_s", timeToReceive.Seconds(), "rpc", rpc)
 
 		rpc.from = peer
-		rpc.receivedAt = time.Now()
+		rpc.receivedAt = messageNetworkReceiveTime
 
+		incomingChannelSendTime := time.Now()
 		treq := NewTimedRequest(rpc, rpc.receivedAt)
 		select {
 		case p.incoming <- treq:
-			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(rpc.receivedAt).Microseconds())
+			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(incomingChannelSendTime).Microseconds())
 
 		case <-p.ctx.Done():
 			// Close is useless because the other side isn't reading.
@@ -212,6 +215,11 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 			s.Reset()
 			p.logger.Debug("error writing message to peer", "peer", s.Conn().RemotePeer(), "err", err)
 			return
+		}
+
+		for i, receiveTimes := range rpc.messageReceiveTimes {
+			topic := rpc.GetPublish()[i].GetTopic()
+			p.metrics.messagePublishTime.Record(context.Background(), time.Since(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
 		}
 	}
 }
