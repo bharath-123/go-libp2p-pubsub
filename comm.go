@@ -105,13 +105,12 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		p.rpcLogger.Debug("received", "peer", s.Conn().RemotePeer(), "duration_s", timeToReceive.Seconds(), "rpc", rpc)
 
 		rpc.from = peer
-		rpc.receivedAt = messageNetworkReceiveTime
+		rpc.receivedAt = time.Now()
 
-		incomingChannelSendTime := time.Now()
 		treq := NewTimedRequest(rpc, rpc.receivedAt)
 		select {
 		case p.incoming <- treq:
-			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(incomingChannelSendTime).Microseconds())
+			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(rpc.receivedAt).Microseconds())
 
 		case <-p.ctx.Done():
 			// Close is useless because the other side isn't reading.
