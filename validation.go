@@ -256,18 +256,18 @@ func (v *validation) ValidateLocal(msg *Message) error {
 // Push pushes a message into the validation pipeline.
 // It returns true if the message can be forwarded immediately without validation.
 func (v *validation) Push(src peer.ID, msg *Message) bool {
-	vals := v.getValidators(msg)
+	// vals := v.getValidators(msg)
 
-	if len(vals) > 0 || msg.Signature != nil {
-		select {
-		case v.validateQ <- &validateReq{vals, src, msg}:
-		default:
-			v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
-			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
-			v.tracer.RejectMessage(msg, RejectValidationQueueFull)
-		}
-		return false
-	}
+	// if len(vals) > 0 || msg.Signature != nil {
+	// 	select {
+	// 	case v.validateQ <- &validateReq{vals, src, msg}:
+	// 	default:
+	// 		v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
+	// 		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
+	// 		v.tracer.RejectMessage(msg, RejectValidationQueueFull)
+	// 	}
+	// 	return false
+	// }
 
 	return true
 }
@@ -399,7 +399,6 @@ loop:
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
-
 
 	// no async validators, accepted message
 	return onValid(msg)
