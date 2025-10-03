@@ -218,8 +218,10 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 		}
 
 		for i, receiveTimes := range rpc.messageReceiveTimes {
-			topic := rpc.GetPublish()[i].GetTopic()
-			p.metrics.messagePublishTime.Record(context.Background(), time.Since(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+			if !receiveTimes.IsZero() {
+				topic := rpc.GetPublish()[i].GetTopic()
+				p.metrics.messagePublishTime.Record(context.Background(), time.Since(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+			}
 		}
 	}
 }
