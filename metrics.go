@@ -398,7 +398,7 @@ func InitMetrics(ps *PubSub) error {
 		metricPrefix+"async_validation_duration",
 		metric.WithDescription("The duration for async validation"),
 		metric.WithUnit("us"),
-		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 30_000_000),
 	); err != nil {
 		return err
 	}
@@ -414,7 +414,7 @@ func InitMetrics(ps *PubSub) error {
 		metricPrefix+"validation_duration",
 		metric.WithDescription("The duration for validation"),
 		metric.WithUnit("us"),
-		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 30_000_000, 40_000_000),
 	); err != nil {
 		return err
 	}
