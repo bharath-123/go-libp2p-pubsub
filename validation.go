@@ -425,8 +425,9 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 
 	switch result {
 	case ValidationAccept:
-		_ = onValid(msg)
+		// record the metric before sending the message over the sendMsg channel
 		v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
+		_ = onValid(msg)
 	case ValidationReject:
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
 		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))

@@ -192,6 +192,15 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 			return err
 		}
 
+		// record the metric before sending it over the network since we can't control network latencies
+		now := time.Now()
+		for i, receiveTimes := range rpc.messageReceiveTimes {
+			if !receiveTimes.IsZero() {
+				topic := rpc.GetPublish()[i].GetTopic()
+				p.metrics.messagePublishTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+			}
+		}
+
 		_, err = s.Write(buf)
 		if err != nil {
 			p.rpcLogger.Debug("failed to send message", "peer", s.Conn().RemotePeer(), "rpc", rpc, "err", err)
@@ -214,14 +223,6 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 			s.Reset()
 			p.logger.Debug("error writing message to peer", "peer", s.Conn().RemotePeer(), "err", err)
 			return
-		}
-
-		now := time.Now()
-		for i, receiveTimes := range rpc.messageReceiveTimes {
-			if !receiveTimes.IsZero() {
-				topic := rpc.GetPublish()[i].GetTopic()
-				p.metrics.messagePublishTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
-			}
 		}
 	}
 }
