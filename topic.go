@@ -364,7 +364,6 @@ func (t *Topic) validate(ctx context.Context, data []byte, opts ...PubOpt) (*Mes
 		ReceivedFrom:  t.p.host.ID(),
 		ValidatorData: pub.validatorData,
 		Local:         pub.local,
-		ReceivedAt:    time.Now(),
 	}
 	treq := NewTimedRequest(func() {
 		t.p.rt.Preprocess(t.p.host.ID(), []*Message{msg})
