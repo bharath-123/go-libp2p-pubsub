@@ -194,11 +194,18 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 
 		// record the metric before sending it over the network since we can't control network latencies
 		now := time.Now()
-		for i, receiveTimes := range rpc.messageReceiveTimes {
-			if !receiveTimes.IsZero() {
-				topic := rpc.GetPublish()[i].GetTopic()
-				p.metrics.messagePublishTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+		if len(rpc.Publish) == 1 {
+			rpcReceiveTime := rpc.messageReceiveTimes[0]
+			if !rpcReceiveTime.IsZero() {
+				topic := rpc.GetPublish()[0].GetTopic()
+				p.metrics.messagePublishTime.Record(context.Background(), now.Sub(rpcReceiveTime).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
 			}
+			// for i, receiveTimes := range rpc.messageReceiveTimes {
+			// 	if !receiveTimes.IsZero() {
+			// 		topic := rpc.GetPublish()[i].GetTopic()
+			// 		p.metrics.messagePublishTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+			// 	}
+			// }
 		}
 
 		_, err = s.Write(buf)
