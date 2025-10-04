@@ -87,8 +87,6 @@ type metrics struct {
 	// the size of the normal outgoing rpc queue
 	outGoingNormalRpcQueueSize metric.Int64Histogram
 	rpcsDropped                metric.Int64Counter
-	// number of times a rpc had to be split
-	rpcSplitCount metric.Int64Counter
 
 	duplicateMessages        metric.Int64Counter
 	rejectedMessages         metric.Int64Counter
@@ -181,13 +179,6 @@ func InitMetrics(ps *PubSub) error {
 		metricPrefix+"outgoing_normal_rpc_queue_size",
 		metric.WithDescription("The size of the normal outgoing rpc queue"),
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 50, 70, 100, 500, 1000),
-	); err != nil {
-		return err
-	}
-
-	if ps.metrics.rpcSplitCount, err = meter.Int64Counter(
-		metricPrefix+"rpc_split_count",
-		metric.WithDescription("The number of times a rpc had to be split"),
 	); err != nil {
 		return err
 	}
