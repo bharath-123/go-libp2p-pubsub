@@ -22,6 +22,10 @@ type metrics struct {
 	sendMsgChannelContentionTime metric.Int64Histogram
 	// Time taken for a message to be published to peers from the time it is received
 	messagePublishTime metric.Int64Histogram
+	// Time taken for a message to be pushed to the rpc queue of the respective peer. 
+	// `messagePublishTime` takes into account some network latency which is incurred if the message
+	// is in the peer's rpc queue backlog
+	messageRpcQueuePushTime metric.Int64Histogram
 
 	// total number of topics subscribed to
 	totalTopicCount metric.Int64Gauge
@@ -150,6 +154,15 @@ func InitMetrics(ps *PubSub) error {
 	if ps.metrics.messagePublishTime, err = meter.Int64Histogram(
 		metricPrefix+"message_publish_time",
 		metric.WithDescription("The time taken for a message to be published to peers from the time it is received"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.messageRpcQueuePushTime, err = meter.Int64Histogram(
+		metricPrefix+"message_rpc_queue_push_time",
+		metric.WithDescription("The time taken for a message to be pushed to the rpc queue of the respective peer"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
 	); err != nil {

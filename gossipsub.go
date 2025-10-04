@@ -1579,6 +1579,15 @@ func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bo
 		return
 	}
 
+	now := time.Now()
+	if len(rpc.Publish) == 1 {
+		rpcReceiveTime := rpc.messageReceiveTimes[0]
+		if !rpcReceiveTime.IsZero() {
+			topic := rpc.GetPublish()[0].GetTopic()
+			gs.p.metrics.messageRpcQueuePushTime.Record(context.Background(), now.Sub(rpcReceiveTime).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+		}
+	}
+
 	gs.p.metrics.outGoingPriorityRpcQueueSize.Record(context.Background(), int64(len(q.queue.priority)))
 	gs.p.metrics.outGoingNormalRpcQueueSize.Record(context.Background(), int64(len(q.queue.normal)))
 
