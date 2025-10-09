@@ -105,6 +105,9 @@ type metrics struct {
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
+
+	networkWriteLatency metric.Int64Histogram
+	networkWriteBytes metric.Int64Counter
 }
 
 func WithMeterProvider(meterProvider metric.MeterProvider) Option {
@@ -443,6 +446,22 @@ func InitMetrics(ps *PubSub) error {
 		metric.WithDescription("The time spent waiting in the validation queue"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.networkWriteLatency, err = meter.Int64Histogram(
+		metricPrefix+"network_write_latency",
+		metric.WithDescription("The latency of writing a message to the network"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.networkWriteBytes, err = meter.Int64Counter(
+		metricPrefix+"network_write_bytes",
+		metric.WithDescription("The number of bytes written to the network"),
 	); err != nil {
 		return err
 	}

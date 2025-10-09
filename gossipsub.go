@@ -1553,7 +1553,12 @@ func (gs *GossipSubRouter) sendRPC(p peer.ID, out *RPC, urgent bool, msgIDs []st
 func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 	gs.logger.Debug("dropping message to peer", "peer", p, "reason", reason)
 	gs.tracer.DropRPC(rpc, p)
-	gs.p.metrics.rpcsDropped.Add(context.Background(), 1, metric.WithAttributes(attribute.String("reason", reason)))
+
+	// Record metrics for dropped RPC with peer ID attribute
+	gs.p.metrics.rpcsDropped.Add(context.Background(), 1, metric.WithAttributes(
+		attribute.String("reason", reason),
+		attribute.String("peer", p.String()),
+	))
 	// push control messages that need to be retried
 	ctl := rpc.GetControl()
 	if ctl != nil {
