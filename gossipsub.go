@@ -2072,7 +2072,7 @@ func (gs *GossipSubRouter) emitGossip(topic string, exclude map[peer.ID]struct{}
 			copy(peerMids, mids)
 		}
 
-		gs.p.metrics.iHaveMsgSent.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
+		// gs.p.metrics.iHaveMsgSent.Add(context.Background(), 1, metric.WithAttributes(attribute.String("topic", topic)))
 		gs.enqueueGossip(p, &pb.ControlIHave{TopicID: &topic, MessageIDs: peerMids})
 	}
 }

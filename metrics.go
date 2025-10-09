@@ -99,9 +99,9 @@ type metrics struct {
 	asyncValidationDuration  metric.Int64Histogram
 	asyncValidationThrottled metric.Int64Counter
 
-	validationDuration metric.Int64Histogram
-
 	validationQueueSize metric.Int64Histogram
+
+	validationQueueWaitingTime metric.Int64Histogram
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
@@ -430,19 +430,19 @@ func InitMetrics(ps *PubSub) error {
 		return err
 	}
 
-	if ps.metrics.validationDuration, err = meter.Int64Histogram(
-		metricPrefix+"validation_duration",
-		metric.WithDescription("The duration for validation"),
-		metric.WithUnit("us"),
-		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 30_000_000, 40_000_000),
-	); err != nil {
-		return err
-	}
-
 	if ps.metrics.validationQueueSize, err = meter.Int64Histogram(
 		metricPrefix+"validation_queue_size",
 		metric.WithDescription("The size of the validation queue"),
 		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.validationQueueWaitingTime, err = meter.Int64Histogram(
+		metricPrefix+"validation_queue_waiting_time",
+		metric.WithDescription("The time spent waiting in the validation queue"),
+		metric.WithUnit("us"),
+		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000),
 	); err != nil {
 		return err
 	}

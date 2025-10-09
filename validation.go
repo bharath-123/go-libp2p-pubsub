@@ -99,6 +99,7 @@ type validateReq struct {
 	vals []*validatorImpl
 	src  peer.ID
 	msg  *Message
+	enqueueTime time.Time
 }
 
 // representation of topic validators
@@ -260,7 +261,7 @@ func (v *validation) Push(src peer.ID, msg *Message) bool {
 
 	if len(vals) > 0 || msg.Signature != nil {
 		select {
-		case v.validateQ <- &validateReq{vals, src, msg}:
+		case v.validateQ <- &validateReq{vals, src, msg, time.Now()}:
 			v.p.metrics.validationQueueSize.Record(context.Background(), int64(len(v.validateQ)))
 		default:
 			v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
@@ -296,6 +297,7 @@ func (v *validation) validateWorker() {
 	for {
 		select {
 		case req := <-v.validateQ:
+			v.p.metrics.validationQueueWaitingTime.Record(context.Background(), time.Since(req.enqueueTime).Microseconds())
 			_ = v.validate(req.vals, req.src, req.msg, false, v.sendMsgBlocking)
 		case <-v.p.ctx.Done():
 			return
@@ -357,7 +359,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 loop:
 	for _, val := range inline {
 		validatorStart := time.Now()
-		validationResult := val.validateMsg(v.p.ctx, src, msg, false, &v.p.metrics)
+		validationResult := val.validateMsg(v.p.ctx, src, msg)
 		msg.ValidationDuration += time.Since(validatorStart)
 		switch validationResult {
 		case ValidationAccept:
@@ -466,7 +468,7 @@ func (v *validation) validateTopic(vals []*validatorImpl, src peer.ID, msg *Mess
 		select {
 		case val.validateThrottle <- struct{}{}:
 			go func(val *validatorImpl) {
-				rch <- val.validateMsg(ctx, src, msg, true, &v.p.metrics)
+				rch <- val.validateMsg(ctx, src, msg)
 				<-val.validateThrottle
 			}(val)
 
@@ -502,7 +504,7 @@ loop:
 func (v *validation) validateSingleTopic(val *validatorImpl, src peer.ID, msg *Message) ValidationResult {
 	select {
 	case val.validateThrottle <- struct{}{}:
-		res := val.validateMsg(v.p.ctx, src, msg, true, &v.p.metrics)
+		res := val.validateMsg(v.p.ctx, src, msg)
 		<-val.validateThrottle
 		return res
 
@@ -512,16 +514,9 @@ func (v *validation) validateSingleTopic(val *validatorImpl, src peer.ID, msg *M
 	}
 }
 
-func (val *validatorImpl) validateMsg(ctx context.Context, src peer.ID, msg *Message, async bool, metricsHandle *metrics) ValidationResult {
+func (val *validatorImpl) validateMsg(ctx context.Context, src peer.ID, msg *Message) ValidationResult {
 	start := time.Now()
 	defer func() {
-		attrs := []attribute.KeyValue{attribute.String("topic", msg.GetTopic())}
-		if async {
-			attrs = append(attrs, attribute.String("validation_type", "async"))
-		} else {
-			attrs = append(attrs, attribute.String("validation_type", "inline"))
-		}
-		metricsHandle.validationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributes(attrs...))
 		val.logger.Debug("validation done", "duration", time.Since(start))
 	}()
 
