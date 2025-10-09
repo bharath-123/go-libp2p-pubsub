@@ -67,6 +67,8 @@ type metrics struct {
 	pruneMsgSentPerTopic metric.Int64Counter
 	// the number of graft msgs sent per topic
 	graftMsgSentPerTopic metric.Int64Counter
+	// the number of ihave msgs sent
+	iHaveMsgSent metric.Int64Counter
 
 	// the number of messages sent per topic
 	topicMsgSent metric.Int64Counter
@@ -86,6 +88,7 @@ type metrics struct {
 	outGoingPriorityRpcQueueSize metric.Int64Histogram
 	// the size of the normal outgoing rpc queue
 	outGoingNormalRpcQueueSize metric.Int64Histogram
+	// the count of dropped rpcs
 	rpcsDropped                metric.Int64Counter
 
 	duplicateMessages        metric.Int64Counter
