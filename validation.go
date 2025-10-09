@@ -261,6 +261,7 @@ func (v *validation) Push(src peer.ID, msg *Message) bool {
 	if len(vals) > 0 || msg.Signature != nil {
 		select {
 		case v.validateQ <- &validateReq{vals, src, msg}:
+			v.p.metrics.validationQueueSize.Record(context.Background(), int64(len(v.validateQ)))
 		default:
 			v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
 			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
@@ -399,7 +400,6 @@ loop:
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
-
 
 	// no async validators, accepted message
 	return onValid(msg)

@@ -22,7 +22,7 @@ type metrics struct {
 	sendMsgChannelContentionTime metric.Int64Histogram
 	// Time taken for a message to be published to peers from the time it is received
 	messagePublishTime metric.Int64Histogram
-	// Time taken for a message to be pushed to the rpc queue of the respective peer. 
+	// Time taken for a message to be pushed to the rpc queue of the respective peer.
 	// `messagePublishTime` takes into account some network latency which is incurred if the message
 	// is in the peer's rpc queue backlog
 	messageRpcQueuePushTime metric.Int64Histogram
@@ -97,6 +97,8 @@ type metrics struct {
 	asyncValidationThrottled metric.Int64Counter
 
 	validationDuration metric.Int64Histogram
+
+	validationQueueSize metric.Int64Histogram
 
 	lateIDONTWANTs      metric.Int64Counter
 	effectiveIDONTWANTs metric.Int64Counter
@@ -430,6 +432,14 @@ func InitMetrics(ps *PubSub) error {
 		metric.WithDescription("The duration for validation"),
 		metric.WithUnit("us"),
 		metric.WithExplicitBucketBoundaries(100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 5_000_000, 10_000_000, 20_000_000, 30_000_000, 40_000_000),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.validationQueueSize, err = meter.Int64Histogram(
+		metricPrefix+"validation_queue_size",
+		metric.WithDescription("The size of the validation queue"),
+		metric.WithExplicitBucketBoundaries(1, 5, 10, 20, 30, 40, 50, 100, 200, 300, 400, 500, 1000),
 	); err != nil {
 		return err
 	}
