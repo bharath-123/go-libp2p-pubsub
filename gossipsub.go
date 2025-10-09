@@ -1562,6 +1562,9 @@ func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 }
 
 func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bool, msgIDs []string) {
+	gs.p.metrics.outGoingPriorityRpcQueueSize.Record(context.Background(), int64(len(q.queue.priority)))
+	gs.p.metrics.outGoingNormalRpcQueueSize.Record(context.Background(), int64(len(q.queue.normal)))
+
 	var err error
 	if urgent {
 		err = q.UrgentPush(rpc, false, msgIDs)
@@ -1580,9 +1583,6 @@ func (gs *GossipSubRouter) doSendRPC(rpc *RPC, p peer.ID, q *rpcQueue, urgent bo
 			gs.p.metrics.messageRpcQueuePushTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
 		}
 	}
-
-	gs.p.metrics.outGoingPriorityRpcQueueSize.Record(context.Background(), int64(len(q.queue.priority)))
-	gs.p.metrics.outGoingNormalRpcQueueSize.Record(context.Background(), int64(len(q.queue.normal)))
 
 	if len(rpc.GetPublish()) > 0 {
 		for _, msg := range rpc.GetPublish() {
