@@ -207,7 +207,7 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 			p.rpcLogger.Debug("failed to send message", "peer", s.Conn().RemotePeer(), "rpc", rpc, "err", err)
 			return err
 		}
-		p.metrics.networkWriteLatency.Record(context.Background(), now.Sub(networkWriteTime).Microseconds())
+		p.metrics.networkWriteLatency.Record(context.Background(), time.Since(networkWriteTime).Microseconds())
 		p.metrics.networkWriteBytes.Add(context.Background(), int64(len(buf)))
 		p.rpcLogger.Debug("sent", "peer", s.Conn().RemotePeer(), "rpc", rpc)
 		return nil
