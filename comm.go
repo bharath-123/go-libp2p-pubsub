@@ -9,6 +9,8 @@ import (
 	"github.com/gogo/protobuf/proto"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/multiformats/go-varint"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -66,7 +68,7 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		// Peek at the message length to know when we should mark the start time
 		// for measuring how long it took to receive a message.
 		_, _ = r.NextMsgLen()
-		start := time.Now()
+		messageNetworkReceiveTime := time.Now()
 		msgbytes, err := r.ReadMsg()
 		if err != nil {
 			r.ReleaseMsg(msgbytes)
@@ -95,12 +97,25 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 			return
 		}
 
-		timeToReceive := time.Since(start)
+		timeToReceive := time.Since(messageNetworkReceiveTime)
+		p.metrics.messageReceivedTime.Record(context.Background(), timeToReceive.Microseconds())
+
+		p.metrics.messageSize.Record(context.Background(), int64(rpc.Size()))
+
 		p.rpcLogger.Debug("received", "peer", s.Conn().RemotePeer(), "duration_s", timeToReceive.Seconds(), "rpc", rpc)
 
 		rpc.from = peer
+		rpc.receivedAt = time.Now()
+
+		// add rpc type and peer id as attributes
+		p.metrics.totalRpcReceived.Add(context.Background(), 1, metric.WithAttributes(attribute.String("rpc_type", rpc.rpcType()), attribute.String("peer_id", peer.String())))
+
+		treq := NewTimedRequest(rpc, rpc.receivedAt)
 		select {
-		case p.incoming <- rpc:
+		case p.incoming <- treq:
+			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(rpc.receivedAt).Microseconds())
+		
+
 		case <-p.ctx.Done():
 			// Close is useless because the other side isn't reading.
 			s.Reset()
@@ -116,8 +131,9 @@ func (p *PubSub) notifyPeerDead(pid peer.ID) {
 	p.peerDeadMx.Unlock()
 	p.peerDeadPrioLk.RUnlock()
 
+	treq := NewTimedRequest(struct{}{}, time.Now())
 	select {
-	case p.peerDead <- struct{}{}:
+	case p.peerDead <- treq:
 	default:
 	}
 }
@@ -127,8 +143,9 @@ func (p *PubSub) handleNewPeer(ctx context.Context, pid peer.ID, outgoing *rpcQu
 	if err != nil {
 		p.logger.Debug("error opening new stream to peer", "err", err, "peer", pid)
 
+		treq := NewTimedRequest(pid, time.Now())
 		select {
-		case p.newPeerError <- pid:
+		case p.newPeerError <- treq:
 		case <-ctx.Done():
 		}
 
@@ -137,8 +154,10 @@ func (p *PubSub) handleNewPeer(ctx context.Context, pid peer.ID, outgoing *rpcQu
 
 	go p.handleSendingMessages(ctx, s, outgoing)
 	go p.handlePeerDead(s)
+
+	treq := NewTimedRequest(s, time.Now())
 	select {
-	case p.newPeerStream <- s:
+	case p.newPeerStream <- treq:
 	case <-ctx.Done():
 	}
 }
@@ -177,11 +196,23 @@ func (p *PubSub) handleSendingMessages(ctx context.Context, s network.Stream, ou
 			return err
 		}
 
+		// record the metric before sending it over the network since we can't control network latencies
+		now := time.Now()
+		for i, receiveTimes := range rpc.messageReceiveTimes {
+			if !receiveTimes.IsZero() {
+				topic := rpc.GetPublish()[i].GetTopic()
+				p.metrics.messagePublishTime.Record(context.Background(), now.Sub(receiveTimes).Microseconds(), metric.WithAttributes(attribute.String("topic", topic)))
+			}
+		}
+
+		networkWriteTime := time.Now()
 		_, err = s.Write(buf)
 		if err != nil {
 			p.rpcLogger.Debug("failed to send message", "peer", s.Conn().RemotePeer(), "rpc", rpc, "err", err)
 			return err
 		}
+		p.metrics.networkWriteLatency.Record(context.Background(), time.Since(networkWriteTime).Microseconds())
+		p.metrics.networkWriteBytes.Add(context.Background(), int64(len(buf)))
 		p.rpcLogger.Debug("sent", "peer", s.Conn().RemotePeer(), "rpc", rpc)
 		return nil
 	}

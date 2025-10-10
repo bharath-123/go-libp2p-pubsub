@@ -113,8 +113,10 @@ func (d *discover) pollTimer() {
 		return
 	}
 
+	treq := NewTimedRequest(d.requestDiscovery, time.Now())
+	treq.AddEvalMethodName("discover.pollTimer")
 	select {
-	case d.p.eval <- d.requestDiscovery:
+	case d.p.eval <- treq:
 	case <-d.p.ctx.Done():
 		return
 	}
@@ -125,8 +127,10 @@ func (d *discover) pollTimer() {
 	for {
 		select {
 		case <-ticker.C:
+			treq := NewTimedRequest(d.requestDiscovery, time.Now())
+			treq.AddEvalMethodName("discover.pollTimer")
 			select {
-			case d.p.eval <- d.requestDiscovery:
+			case d.p.eval <- treq:
 			case <-d.p.ctx.Done():
 				return
 			}
@@ -253,11 +257,13 @@ func (d *discover) Bootstrap(ctx context.Context, topic string, ready RouterRead
 	for {
 		// Check if ready for publishing
 		bootstrapped := make(chan bool, 1)
-		select {
-		case d.p.eval <- func() {
+		treq := NewTimedRequest(func() {
 			done, _ := ready(d.p.rt, topic)
 			bootstrapped <- done
-		}:
+		}, time.Now())
+		treq.AddEvalMethodName("discover.Bootstrap")
+		select {
+		case d.p.eval <- treq:
 			if <-bootstrapped {
 				return true
 			}

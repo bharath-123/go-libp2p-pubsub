@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -97,6 +99,7 @@ type validateReq struct {
 	vals []*validatorImpl
 	src  peer.ID
 	msg  *Message
+	enqueueTime time.Time
 }
 
 // representation of topic validators
@@ -258,9 +261,11 @@ func (v *validation) Push(src peer.ID, msg *Message) bool {
 
 	if len(vals) > 0 || msg.Signature != nil {
 		select {
-		case v.validateQ <- &validateReq{vals, src, msg}:
+		case v.validateQ <- &validateReq{vals, src, msg, time.Now()}:
+			v.p.metrics.validationQueueSize.Record(context.Background(), int64(len(v.validateQ)))
 		default:
 			v.p.logger.Debug("message validation throttled: queue full; dropping message from peer", "peer", src)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectValidationQueueFull)
 		}
 		return false
@@ -292,6 +297,7 @@ func (v *validation) validateWorker() {
 	for {
 		select {
 		case req := <-v.validateQ:
+			v.p.metrics.validationQueueWaitingTime.Record(context.Background(), time.Since(req.enqueueTime).Microseconds())
 			_ = v.validate(req.vals, req.src, req.msg, false, v.sendMsgBlocking)
 		case <-v.p.ctx.Done():
 			return
@@ -300,8 +306,11 @@ func (v *validation) validateWorker() {
 }
 
 func (v *validation) sendMsgBlocking(msg *Message) error {
+	start := time.Now()
+	treq := NewTimedRequest(msg, start)
 	select {
-	case v.p.sendMsg <- msg:
+	case v.p.sendMsg <- treq:
+		v.p.metrics.sendMsgChannelContentionTime.Record(context.Background(), time.Since(start).Microseconds())
 		return nil
 	case <-v.p.ctx.Done():
 		return v.p.ctx.Err()
@@ -317,6 +326,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 	if msg.Signature != nil {
 		if !v.validateSignature(msg) {
 			v.p.logger.Debug("message signature validation failed; dropping message from peer", "peer", src)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectInvalidSignature)
 			return ValidationError{Reason: RejectInvalidSignature}
 		}
@@ -326,6 +336,7 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 	// and avoid invoking user validators more than once
 	id := v.p.idGen.ID(msg)
 	if !v.p.markSeen(id) {
+		v.p.metrics.duplicateMessages.Add(context.Background(), 1)
 		v.tracer.DuplicateMessage(msg)
 		return dupeErr{}
 	} else {
@@ -343,9 +354,14 @@ func (v *validation) validate(vals []*validatorImpl, src peer.ID, msg *Message, 
 
 	// apply inline (synchronous) validators
 	result := ValidationAccept
+
+	inlineValidationStart := time.Now()
 loop:
 	for _, val := range inline {
-		switch val.validateMsg(v.p.ctx, src, msg) {
+		validatorStart := time.Now()
+		validationResult := val.validateMsg(v.p.ctx, src, msg)
+		msg.ValidationDuration += time.Since(validatorStart)
+		switch validationResult {
 		case ValidationAccept:
 		case ValidationReject:
 			result = ValidationReject
@@ -354,9 +370,12 @@ loop:
 			result = ValidationIgnore
 		}
 	}
+	inlineValidationDuration := time.Since(inlineValidationStart)
+	v.p.metrics.inlineValidationDuration.Record(context.Background(), inlineValidationDuration.Microseconds())
 
 	if result == ValidationReject {
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return ValidationError{Reason: RejectValidationFailed}
 	}
@@ -370,13 +389,16 @@ loop:
 				<-v.validateThrottle
 			}()
 		default:
+			v.p.metrics.asyncValidationThrottled.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.p.logger.Debug("message validation throttled; dropping message from peer", "peer", src)
+			v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 			v.tracer.RejectMessage(msg, RejectValidationThrottled)
 		}
 		return nil
 	}
 
 	if result == ValidationIgnore {
+		v.p.metrics.ignoredMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return ValidationError{Reason: RejectValidationIgnored}
 	}
@@ -396,6 +418,7 @@ func (v *validation) validateSignature(msg *Message) bool {
 }
 
 func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Message, r ValidationResult, onValid func(*Message) error) {
+	start := time.Now()
 	result := v.validateTopic(vals, src, msg)
 
 	if result == ValidationAccept && r != ValidationAccept {
@@ -404,17 +427,22 @@ func (v *validation) doValidateTopic(vals []*validatorImpl, src peer.ID, msg *Me
 
 	switch result {
 	case ValidationAccept:
+		// record the metric before sending the message over the sendMsg channel
+		v.p.metrics.asyncValidationDuration.Record(context.Background(), time.Since(start).Microseconds(), metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		_ = onValid(msg)
 	case ValidationReject:
 		v.p.logger.Debug("message validation failed; dropping message from peer", "peer", src)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationFailed)
 		return
 	case ValidationIgnore:
 		v.p.logger.Debug("message validation punted; ignoring message from peer", "peer", src)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationIgnored)
 		return
 	case validationThrottled:
 		v.p.logger.Debug("message validation throttled; ignoring message from peer", "peer", src)
+		v.p.metrics.rejectedMessages.Add(context.Background(), 1, metric.WithAttributeSet(attribute.NewSet(attribute.String("topic", msg.GetTopic()))))
 		v.tracer.RejectMessage(msg, RejectValidationThrottled)
 
 	default:
@@ -498,7 +526,10 @@ func (val *validatorImpl) validateMsg(ctx context.Context, src peer.ID, msg *Mes
 		defer cancel()
 	}
 
+	validationStartTime := time.Now()
 	r := val.validate(ctx, src, msg)
+	took := time.Since(validationStartTime)
+	msg.ValidationDuration = took
 	switch r {
 	case ValidationAccept:
 		fallthrough
