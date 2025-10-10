@@ -1554,35 +1554,10 @@ func (gs *GossipSubRouter) doDropRPC(rpc *RPC, p peer.ID, reason string) {
 	gs.logger.Debug("dropping message to peer", "peer", p, "reason", reason)
 	gs.tracer.DropRPC(rpc, p)
 
-	// Determine if RPC contains only control messages, only publish messages, or both control and publish messages
-	var rpcType string
-	hasSubs := len(rpc.GetSubscriptions()) > 0
-	hasPub := len(rpc.GetPublish()) > 0
-	hasCtrl := rpc.GetControl() != nil
-	
-	switch {
-	case !hasSubs && !hasPub && !hasCtrl:
-		rpcType = "empty"
-	case hasSubs && !hasPub && !hasCtrl:
-		rpcType = "subscription_only"
-	case !hasSubs && hasPub && !hasCtrl:
-		rpcType = "publish_only"
-	case !hasSubs && !hasPub && hasCtrl:
-		rpcType = "control_only"
-	case hasSubs && hasPub && !hasCtrl:
-		rpcType = "subscription_and_publish"
-	case hasSubs && !hasPub && hasCtrl:
-		rpcType = "subscription_and_control"
-	case !hasSubs && hasPub && hasCtrl:
-		rpcType = "control_and_publish"
-	case hasSubs && hasPub && hasCtrl:
-		rpcType = "subscription_control_and_publish"
-	}
-
 	// Record metrics for dropped RPC with peer ID attribute
 	gs.p.metrics.rpcsDropped.Add(context.Background(), 1, metric.WithAttributes(
 		attribute.String("reason", reason),
-		attribute.String("rpc_type", rpcType),
+		attribute.String("rpc_type", rpc.rpcType()),
 		attribute.String("peer", p.String()),
 	))
 	// push control messages that need to be retried

@@ -107,10 +107,14 @@ func (p *PubSub) handleNewStream(s network.Stream) {
 		rpc.from = peer
 		rpc.receivedAt = time.Now()
 
+		// add rpc type and peer id as attributes
+		p.metrics.totalRpcReceived.Add(context.Background(), 1, metric.WithAttributes(attribute.String("rpc_type", rpc.rpcType()), attribute.String("peer_id", peer.String())))
+
 		treq := NewTimedRequest(rpc, rpc.receivedAt)
 		select {
 		case p.incoming <- treq:
 			p.metrics.rpcIncomingChannelContentionTime.Record(context.Background(), time.Since(rpc.receivedAt).Microseconds())
+		
 
 		case <-p.ctx.Done():
 			// Close is useless because the other side isn't reading.

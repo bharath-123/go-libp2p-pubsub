@@ -27,6 +27,8 @@ type metrics struct {
 	// is in the peer's rpc queue backlog
 	messageRpcQueuePushTime metric.Int64Histogram
 
+	totalRpcReceived metric.Int64Counter
+
 	// total number of topics subscribed to
 	totalTopicCount metric.Int64Gauge
 	// total number of subscriptions active in the pubsub router per topic
@@ -462,6 +464,13 @@ func InitMetrics(ps *PubSub) error {
 	if ps.metrics.networkWriteBytes, err = meter.Int64Counter(
 		metricPrefix+"network_write_bytes",
 		metric.WithDescription("The number of bytes written to the network"),
+	); err != nil {
+		return err
+	}
+
+	if ps.metrics.totalRpcReceived, err = meter.Int64Counter(
+		metricPrefix+"total_rpc_received",
+		metric.WithDescription("The total number of RPCs received"),
 	); err != nil {
 		return err
 	}

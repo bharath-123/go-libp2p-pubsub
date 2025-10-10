@@ -275,6 +275,34 @@ type RPC struct {
 	messageReceiveTimes []time.Time
 }
 
+func (rpc *RPC) rpcType() string {
+	hasSubs := len(rpc.GetSubscriptions()) > 0
+	hasPub := len(rpc.GetPublish()) > 0
+	hasCtrl := rpc.GetControl() != nil
+	
+	var rpcType string
+	switch {
+	case !hasSubs && !hasPub && !hasCtrl:
+		rpcType = "empty"
+	case hasSubs && !hasPub && !hasCtrl:
+		rpcType = "subscription_only"
+	case !hasSubs && hasPub && !hasCtrl:
+		rpcType = "publish_only"
+	case !hasSubs && !hasPub && hasCtrl:
+		rpcType = "control_only"
+	case hasSubs && hasPub && !hasCtrl:
+		rpcType = "subscription_and_publish"
+	case hasSubs && !hasPub && hasCtrl:
+		rpcType = "subscription_and_control"
+	case !hasSubs && hasPub && hasCtrl:
+		rpcType = "control_and_publish"
+	case hasSubs && hasPub && hasCtrl:
+		rpcType = "subscription_control_and_publish"
+	}
+
+	return rpcType
+}
+
 // split splits the given RPC If a sub RPC is too large and can't be split
 // further (e.g. Message data is bigger than the RPC limit), then it will be
 // returned as an oversized RPC. The caller should filter out oversized RPCs.
