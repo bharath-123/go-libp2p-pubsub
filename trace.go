@@ -74,10 +74,6 @@ func (t *pubsubTracer) RTTCalculated(p peer.ID, rtt time.Duration) {
 		return
 	}
 
-	if t.tracer == nil {
-		return
-	}
-
 	for _, tr := range t.raw {
 		tr.RTTCalculated(p, rtt)
 	}
