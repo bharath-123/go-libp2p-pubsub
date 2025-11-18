@@ -34,6 +34,8 @@ func (r rttLookup) lookup(i peer.ID) (rtt time.Duration) {
 			return
 		}
 	}
+	
+	r.ps.tracer.RTTCalculated(i, rtt)
 	return
 }
 
