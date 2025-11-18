@@ -78,6 +78,10 @@ func (t *pubsubTracer) RTTCalculated(p peer.ID, rtt time.Duration) {
 		tr.RTTCalculated(p, rtt)
 	}
 
+	if t.tracer == nil {
+		return
+	}
+
 	now := time.Now().UnixNano()
 	rttTime := rtt.Milliseconds()
 	evt := &pb.TraceEvent{
