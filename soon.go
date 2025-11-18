@@ -18,7 +18,8 @@ type peerBundle struct {
 }
 
 type rttLookup struct {
-	h host.Host
+	h  host.Host
+	ps *PubSub
 }
 
 func (r rttLookup) lookup(i peer.ID) (rtt time.Duration) {
@@ -29,6 +30,7 @@ func (r rttLookup) lookup(i peer.ID) (rtt time.Duration) {
 		var quicConn *quic.Conn
 		if conn.As(&quicConn) {
 			rtt = quicConn.ConnectionStats().SmoothedRTT
+			r.ps.tracer.RTTCalculated(i, rtt)
 			return
 		}
 	}
@@ -41,8 +43,9 @@ func WithNFastestPeers(n int) Option {
 		if !ok {
 			return errors.New("not a gossipsub router")
 		}
-		rttLookup := rttLookup{ps.host}
+		rttLookup := rttLookup{h: ps.host, ps: ps}
 		s := nFastestPeersScheduler{
+			p:            ps,
 			n:            n,
 			peerSizeHint: gs.params.D,
 			rttFn:        rttLookup.lookup,
@@ -53,6 +56,7 @@ func WithNFastestPeers(n int) Option {
 }
 
 type nFastestPeersScheduler struct {
+	p            *PubSub
 	n            int
 	peerSizeHint int
 	rttFn        func(peer.ID) time.Duration
