@@ -3015,6 +3015,7 @@ func (m *mockRawTracer) SendRPC(rpc *RPC, p peer.ID)               {}
 func (m *mockRawTracer) ThrottlePeer(p peer.ID)                    {}
 func (m *mockRawTracer) UndeliverableMessage(msg *Message)         {}
 func (m *mockRawTracer) ValidateMessage(msg *Message)              {}
+func (m *mockRawTracer) RTTCalculated(p peer.ID, time time.Duration) {}
 
 var _ RawTracer = &mockRawTracer{}
 

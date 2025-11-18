@@ -265,3 +265,4 @@ func (t *tagTracer) RecvRPC(rpc *RPC)                  {}
 func (t *tagTracer) SendRPC(rpc *RPC, p peer.ID)       {}
 func (t *tagTracer) DropRPC(rpc *RPC, p peer.ID)       {}
 func (t *tagTracer) UndeliverableMessage(msg *Message) {}
+func (t *tagTracer) RTTCalculated(p peer.ID, rtt time.Duration) {}

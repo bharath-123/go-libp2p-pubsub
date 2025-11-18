@@ -842,6 +842,8 @@ func (ps *peerScore) DropRPC(rpc *RPC, p peer.ID) {}
 
 func (ps *peerScore) UndeliverableMessage(msg *Message) {}
 
+func (ps *peerScore) RTTCalculated(p peer.ID, rtt time.Duration) {}
+
 // message delivery records
 func (d *messageDeliveries) getRecord(id string) *deliveryRecord {
 	rec, ok := d.records[id]

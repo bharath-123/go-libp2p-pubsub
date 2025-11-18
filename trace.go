@@ -57,6 +57,8 @@ type RawTracer interface {
 	// UndeliverableMessage is invoked when the consumer of Subscribe is not reading messages fast enough and
 	// the pressure release mechanism trigger, dropping messages.
 	UndeliverableMessage(msg *Message)
+	// RTTCalculated is invoked when the RTT of a peer is calculated.
+	RTTCalculated(p peer.ID, rtt time.Duration)
 }
 
 // pubsub tracer details
@@ -65,6 +67,34 @@ type pubsubTracer struct {
 	raw    []RawTracer
 	pid    peer.ID
 	idGen  *msgIDGenerator
+}
+
+func (t *pubsubTracer) RTTCalculated(p peer.ID, rtt time.Duration) {
+	if t == nil {
+		return
+	}
+
+	if t.tracer == nil {
+		return
+	}
+
+	for _, tr := range t.raw {
+		tr.RTTCalculated(p, rtt)
+	}
+
+	now := time.Now().UnixNano()
+	rttTime := rtt.Milliseconds()
+	evt := &pb.TraceEvent{
+		Type:      pb.TraceEvent_RTT_CALCULATED.Enum(),
+		PeerID:    []byte(t.pid),
+		Timestamp: &now,
+		RttCalculated: &pb.TraceEvent_RTTCalculated{
+			PeerID: []byte(p),
+			Time:   &rttTime,
+		},
+	}
+
+	t.tracer.Trace(evt)
 }
 
 func (t *pubsubTracer) PublishMessage(msg *Message) {
